@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowRight, Loader2, Lock, Mail, ShieldCheck, User } from 'lucide-react';
+import { ArrowRight, Loader2, Lock, Mail, MapPin, Phone, ShieldCheck, User } from 'lucide-react';
 import { SiteConfig, User as UserType } from '../types';
 import { api } from '../services/api';
 
@@ -26,6 +26,9 @@ const Login: React.FC<LoginProps> = ({
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [address, setAddress] = useState('');
+  const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState('');
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
@@ -54,7 +57,14 @@ const Login: React.FC<LoginProps> = ({
   };
 
   const handleRegister = async () => {
-    const data = await api.register(email, password, username);
+    const data = await api.register({
+      email,
+      password,
+      username,
+      fullName,
+      address,
+      phone
+    });
     setSuccess(data.message);
     setMode('otp');
   };
@@ -101,6 +111,8 @@ const Login: React.FC<LoginProps> = ({
       ? 'Remplissez le formulaire puis recevez un code OTP par email.'
       : `Entrez le code OTP envoyé à ${email || 'votre email'}.`;
 
+  const inputClass = 'block w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 pl-10';
+
   return (
     <div className="relative flex min-h-[82vh] items-center justify-center overflow-hidden">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(15,23,42,0.95),_rgba(15,23,42,1)_35%,_rgba(2,6,23,1)_100%)]"></div>
@@ -138,9 +150,9 @@ const Login: React.FC<LoginProps> = ({
 
         <div className="w-full rounded-[32px] border border-white/10 bg-white/90 p-8 shadow-2xl backdrop-blur-xl md:p-10">
           <div className="mb-8 text-center">
-            <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl text-xl font-black text-white shadow-lg" style={{ backgroundColor: 'var(--theme-accent)' }}>
+            <div className="mx-auto mb-5 flex h-24 w-56 items-center justify-center rounded-2xl text-xl font-black text-slate-900">
               {siteConfig.logoUrl ? (
-                <img src={siteConfig.logoUrl} alt={siteConfig.siteName} className="h-9 w-auto object-contain" />
+                <img src={siteConfig.logoUrl} alt={siteConfig.siteName} className="max-h-20 w-full object-contain" />
               ) : (
                 siteConfig.siteName?.charAt(0) || 'T'
               )}
@@ -163,22 +175,74 @@ const Login: React.FC<LoginProps> = ({
 
           <form onSubmit={handleSubmit} className="space-y-6">
             {mode === 'register' && (
-              <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">Nom d'utilisateur</label>
-                <div className="relative">
-                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                    <User size={18} className="text-slate-400" />
+              <>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">Nom d'utilisateur</label>
+                    <div className="relative">
+                      <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                        <User size={18} className="text-slate-400" />
+                      </div>
+                      <input
+                        type="text"
+                        required
+                        className={inputClass}
+                        placeholder="Nom"
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                      />
+                    </div>
                   </div>
-                  <input
-                    type="text"
-                    required
-                    className="block w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 pl-10"
-                    placeholder="othme"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                  />
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">Nom complet</label>
+                    <div className="relative">
+                      <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                        <User size={18} className="text-slate-400" />
+                      </div>
+                      <input
+                        type="text"
+                        required
+                        className={inputClass}
+                        placeholder="Nom complet"
+                        value={fullName}
+                        onChange={(e) => setFullName(e.target.value)}
+                      />
+                    </div>
+                  </div>
                 </div>
-              </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Adresse</label>
+                  <div className="relative">
+                    <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                      <MapPin size={18} className="text-slate-400" />
+                    </div>
+                    <input
+                      type="text"
+                      required
+                      className={inputClass}
+                      placeholder="Rue, ville, gouvernorat"
+                      value={address}
+                      onChange={(e) => setAddress(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Numéro de téléphone</label>
+                  <div className="relative">
+                    <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                      <Phone size={18} className="text-slate-400" />
+                    </div>
+                    <input
+                      type="tel"
+                      required
+                      className={inputClass}
+                      placeholder="+216 XX XXX XXX"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                    />
+                  </div>
+                </div>
+              </>
             )}
 
             {mode !== 'otp' && (
@@ -192,7 +256,7 @@ const Login: React.FC<LoginProps> = ({
                     <input
                       type="email"
                       required
-                      className="block w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 pl-10"
+                      className={inputClass}
                       placeholder="vous@exemple.com"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
@@ -210,7 +274,7 @@ const Login: React.FC<LoginProps> = ({
                       type="password"
                       required
                       minLength={6}
-                      className="block w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 pl-10"
+                      className={inputClass}
                       placeholder="••••••••"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}

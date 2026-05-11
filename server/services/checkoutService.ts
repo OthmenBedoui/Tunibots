@@ -152,7 +152,7 @@ export const createCheckoutOrder = async (rawInput: GuestCheckoutInput) => {
       data: {
         orderNumber,
         userId: input.userId,
-        status: 'REGISTERED',
+        status: 'IN_PROGRESS',
         amount: totalAmount,
         currency: 'TND',
         source: input.source,

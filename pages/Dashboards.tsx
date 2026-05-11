@@ -1,13 +1,14 @@
 
 import React, { useState, useEffect } from 'react';
 import { Package, TrendingUp, DollarSign, Plus, Loader2, Zap, Crown, Users, Shield, FolderTree, Trash2, Edit, LayoutGrid, Save, X, Settings, User as UserIcon, Clock, History } from 'lucide-react';
-import { User, Order, OrderStatus, Listing, UserRole, Category, SubCategory, ProductType, LoginCredential, SiteConfig, HeroSlide, HeroPromoBanner, FloatingBrandCard, DiscountType, ProductVariant, StoreSectionConfig } from '../types';
+import { User, Order, OrderStatus, Listing, UserRole, Category, SubCategory, ProductType, LoginCredential, SiteConfig, HeroSlide, HeroPromoBanner, FloatingBrandCard, DiscountType, ProductVariant, StoreSectionConfig, CustomFont } from '../types';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { generateListingDescription } from '../services/geminiService';
-import { api } from '../services/api';
+import { api, SeoAnalytics } from '../services/api';
 import * as LucideIcons from 'lucide-react';
 import { ImageInput } from '../components/ImageInput';
 import { RichTextEditor } from '../components/RichTextEditor';
+import { ListingImage } from '../components/ListingImage';
 import { getListingDiscountLabel, getListingFinalPrice, getPackageOriginalTotal, getPackageSavings, hasListingDiscount } from '../utils/pricing';
 import { richTextToPlainText, sanitizeRichText } from '../utils/richText';
 import { getMergedStoreSections, STORE_SECTION_DEFINITIONS } from '../utils/storeSections';
@@ -24,6 +25,9 @@ interface AdminDashboardProps {
   user: User;
   siteConfig: SiteConfig;
   onUpdateSiteConfig: (config: Partial<SiteConfig>) => void;
+  onResendOrderInvoiceEmail: (orderId: string) => Promise<void>;
+  focusOrderId?: string | null;
+  onFocusOrderHandled?: () => void;
 }
 
 const isImageIconValue = (value?: string) => {
@@ -158,6 +162,39 @@ const SYSTEM_PLATFORM_OPTIONS = [
   'Linux',
   'SteamOS'
 ];
+
+const DEFAULT_SITE_FONT =
+  '"Albeit Grotesk Caps", "Albeit Grotesk", "Arial Narrow", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+
+const FONT_OPTIONS = [
+  { label: 'Albeit Grotesk Caps', value: DEFAULT_SITE_FONT },
+  { label: 'Inter / System', value: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' },
+  { label: 'Apple System', value: '-apple-system, BlinkMacSystemFont, "Segoe UI", ui-sans-serif, system-ui, sans-serif' },
+  { label: 'Arial Narrow', value: '"Arial Narrow", Arial, ui-sans-serif, system-ui, sans-serif' },
+  { label: 'Georgia', value: 'Georgia, "Times New Roman", serif' },
+  { label: 'Mono', value: '"JetBrains Mono", "SFMono-Regular", Consolas, monospace' }
+];
+
+const DEFAULT_EMAIL_TEMPLATES: Record<string, { label: string; subject: string; html: string; variables: string[] }> = {
+  registrationOtp: {
+    label: 'OTP inscription',
+    subject: 'Code de verification TuniBots',
+    html: '<h2>Confirmez votre inscription</h2><p>Bonjour {{username}},</p><p>Votre code OTP est :</p><h1>{{otpCode}}</h1><p>Ce code expire dans {{otpExpiryMinutes}} minutes.</p>',
+    variables: ['username', 'otpCode', 'otpExpiryMinutes']
+  },
+  orderInvoice: {
+    label: 'Facture commande',
+    subject: 'Facture TuniBots {{orderNumber}}',
+    html: '<h1>Votre commande est en cours</h1><p>Bonjour {{customerName}}, votre facture TuniBots est générée.</p><p>Commande: {{orderNumber}}</p><p>Facture: {{invoiceNumber}}</p><p>Total: {{totalAmount}}</p><p>Email: {{customerEmail}}</p><p>Téléphone: {{customerPhone}}</p><table>{{itemsRows}}</table><p>Notre support vous guidera dans votre commande.</p>',
+    variables: ['orderNumber', 'invoiceNumber', 'invoiceDate', 'customerName', 'customerEmail', 'customerPhone', 'paymentMethod', 'totalAmount', 'amount', 'currency', 'itemsRows']
+  },
+  testEmail: {
+    label: 'Test SMTP',
+    subject: 'Test email TuniBots',
+    html: '<h1>Configuration email valide</h1><p>Ce message confirme que le SMTP configuré peut envoyer des emails.</p>',
+    variables: []
+  }
+};
 
 const PRODUCT_REGION_OPTIONS = [
   'Global',
@@ -370,30 +407,30 @@ const SubCategoryIconPicker = ({
 );
 
 const ORDER_STATUS_STEPS: { status: OrderStatus; label: string; description: string }[] = [
-  { status: OrderStatus.REGISTERED, label: 'Enregistrée', description: 'Commande créée et enregistrée dans Tunidex.' },
-  { status: OrderStatus.PENDING_PAYMENT, label: 'Paiement en attente', description: 'Commande créée, en attente de validation du paiement.' },
-  { status: OrderStatus.PAYMENT_RECEIVED, label: 'Paiement reçu', description: 'Paiement confirmé manuellement par un agent.' },
-  { status: OrderStatus.COMPLETED, label: 'Terminée', description: 'Commande finalisée et clôturée.' }
+  { status: OrderStatus.IN_PROGRESS, label: 'En cours', description: 'Commande confirmée, facture envoyée et support en accompagnement.' },
+  { status: OrderStatus.DELIVERED, label: 'Livré', description: 'Commande livrée au client et clôturée.' }
 ];
 
 const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
-  [OrderStatus.REGISTERED]: 'Enregistrée',
-  [OrderStatus.PENDING_PAYMENT]: 'Paiement en attente',
-  [OrderStatus.PAYMENT_RECEIVED]: 'Paiement reçu',
-  [OrderStatus.COMPLETED]: 'Terminée',
+  [OrderStatus.IN_PROGRESS]: 'En cours',
+  [OrderStatus.DELIVERED]: 'Livré',
+  [OrderStatus.REGISTERED]: 'En cours',
+  [OrderStatus.PENDING_PAYMENT]: 'En cours',
+  [OrderStatus.PAYMENT_RECEIVED]: 'En cours',
+  [OrderStatus.COMPLETED]: 'Livré',
   [OrderStatus.CANCELLED]: 'Annulée'
 };
 
 const getOrderStepIndex = (status: OrderStatus) => {
+  if ([OrderStatus.REGISTERED, OrderStatus.PENDING_PAYMENT, OrderStatus.PAYMENT_RECEIVED].includes(status)) return 0;
+  if (status === OrderStatus.COMPLETED) return 1;
   const index = ORDER_STATUS_STEPS.findIndex((step) => step.status === status);
   return index === -1 ? -1 : index;
 };
 
 const getOrderStatusClasses = (status: OrderStatus) => {
-  if (status === OrderStatus.COMPLETED) return 'bg-green-100 text-green-700';
+  if (status === OrderStatus.DELIVERED || status === OrderStatus.COMPLETED) return 'bg-green-100 text-green-700';
   if (status === OrderStatus.CANCELLED) return 'bg-red-100 text-red-700';
-  if (status === OrderStatus.PAYMENT_RECEIVED) return 'bg-blue-100 text-blue-700';
-  if (status === OrderStatus.REGISTERED) return 'bg-slate-200 text-slate-700';
   return 'bg-amber-100 text-amber-700';
 };
 
@@ -403,8 +440,8 @@ const getListingStateClasses = (listing: Listing) => {
   return 'bg-red-100 text-red-700';
 };
 
-export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings, categories, onUpdateStatus, onCreateListing, onUpdateListing, onDeleteListing, onRefreshCategories, user, siteConfig, onUpdateSiteConfig }) => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'orders' | 'listings' | 'create' | 'users' | 'categories' | 'settings' | 'customization' | 'store-config' | 'data'>('overview');
+export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings, categories, onUpdateStatus, onCreateListing, onUpdateListing, onDeleteListing, onRefreshCategories, user, siteConfig, onUpdateSiteConfig, onResendOrderInvoiceEmail, focusOrderId, onFocusOrderHandled }) => {
+  const [activeTab, setActiveTab] = useState<'overview' | 'orders' | 'listings' | 'create' | 'users' | 'categories' | 'settings' | 'customization' | 'store-config' | 'email-config' | 'notification-config' | 'seo' | 'data'>('overview');
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [stats, setStats] = useState<{name: string, sales: number, orders: number}[]>([]);
   const [summary, setSummary] = useState({ totalSales: 0, totalOrders: 0, totalUsers: 0 });
@@ -413,6 +450,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
   const [listingPendingDelete, setListingPendingDelete] = useState<Listing | null>(null);
   const [isDeletingListing, setIsDeletingListing] = useState(false);
   const [orderFilter, setOrderFilter] = useState<'all' | OrderStatus>('all');
+  const [orderSearch, setOrderSearch] = useState('');
+  const [orderSort, setOrderSort] = useState<'newest' | 'oldest' | 'amount-desc' | 'amount-asc'>('newest');
+  const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [adminToast, setAdminToast] = useState<{ type: 'success' | 'error'; title: string; message: string } | null>(null);
   const [adminConfirmation, setAdminConfirmation] = useState<{
     title: string;
@@ -509,8 +549,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
 
   useEffect(() => {
     if (newListingTitle) {
-        setNewListingMetaTitle(`${newListingTitle} | Tunidex`);
-        setNewListingMetaDesc(`Achetez ${newListingTitle} au meilleur prix sur Tunidex. Livraison rapide et sécurisée.`);
+        setNewListingMetaTitle(`${newListingTitle} | TuniBots`);
+        setNewListingMetaDesc(`Achetez ${newListingTitle} au meilleur prix sur TuniBots. Livraison rapide et sécurisée.`);
     }
   }, [newListingTitle]);
 
@@ -543,21 +583,37 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
   const [coverBackgroundUrl, setCoverBackgroundUrl] = useState(siteConfig.coverBackgroundUrl || '');
   const [coverListingIds, setCoverListingIds] = useState<string[]>(siteConfig.coverListingIds || []);
   const [storeSections, setStoreSections] = useState<StoreSectionConfig[]>(getMergedStoreSections(siteConfig));
-  const [customizationSection, setCustomizationSection] = useState<'hero' | 'floating-cards' | 'store-cover' | 'colors' | 'layout'>('hero');
+  const [customizationSection, setCustomizationSection] = useState<'hero' | 'floating-cards' | 'store-cover' | 'colors' | 'font' | 'layout'>('hero');
   const [accentColor, setAccentColor] = useState(siteConfig.accentColor || '#4f46e5');
   const [accentHoverColor, setAccentHoverColor] = useState(siteConfig.accentHoverColor || '#4338ca');
   const [accentSoftColor, setAccentSoftColor] = useState(siteConfig.accentSoftColor || '#e0e7ff');
   const [accentTextColor, setAccentTextColor] = useState(siteConfig.accentTextColor || '#312e81');
+  const [fontFamily, setFontFamily] = useState(siteConfig.fontFamily || DEFAULT_SITE_FONT);
+  const [customFonts, setCustomFonts] = useState<CustomFont[]>(siteConfig.customFonts || []);
+  const [fontUploadError, setFontUploadError] = useState('');
   const [headerAnnouncement, setHeaderAnnouncement] = useState(siteConfig.headerAnnouncement || 'Bienvenue sur la première plateforme digitale en Tunisie !');
   const [headerSearchPlaceholder, setHeaderSearchPlaceholder] = useState(siteConfig.headerSearchPlaceholder || 'Rechercher jeux, items, comptes...');
   const [headerCtaLabel, setHeaderCtaLabel] = useState(siteConfig.headerCtaLabel || "S'inscrire");
   const [footerTagline, setFooterTagline] = useState(siteConfig.footerTagline || 'Marketplace digitale premium');
   const [footerDescription, setFooterDescription] = useState(siteConfig.footerDescription || 'La destination premium pour vos comptes, licences, abonnements, outils IA et services digitaux en Tunisie.');
-  const [footerEmail, setFooterEmail] = useState(siteConfig.footerEmail || 'support@tunidex.tn');
+  const [footerEmail, setFooterEmail] = useState(siteConfig.footerEmail || 'support@tunibots.tn');
   const [footerPhone, setFooterPhone] = useState(siteConfig.footerPhone || '+216 00 000 000');
   const [footerWhatsapp, setFooterWhatsapp] = useState(siteConfig.footerWhatsapp || '+216 00 000 000');
   const [footerAddress, setFooterAddress] = useState(siteConfig.footerAddress || 'Tunis, Tunisie');
   const [footerCopyright, setFooterCopyright] = useState(siteConfig.footerCopyright || 'Tous droits réservés.');
+  const [seoTitle, setSeoTitle] = useState(siteConfig.seoTitle || '');
+  const [seoDescription, setSeoDescription] = useState(siteConfig.seoDescription || '');
+  const [seoKeywords, setSeoKeywords] = useState(siteConfig.seoKeywords || '');
+  const [seoCanonicalUrl, setSeoCanonicalUrl] = useState(siteConfig.seoCanonicalUrl || '');
+  const [seoOgImageUrl, setSeoOgImageUrl] = useState(siteConfig.seoOgImageUrl || '');
+  const [seoRobots, setSeoRobots] = useState(siteConfig.seoRobots || 'index,follow');
+  const [seoSitemapEnabled, setSeoSitemapEnabled] = useState(siteConfig.seoSitemapEnabled ?? true);
+  const [seoOrganizationName, setSeoOrganizationName] = useState(siteConfig.seoOrganizationName || '');
+  const [seoGoogleAnalyticsId, setSeoGoogleAnalyticsId] = useState(siteConfig.seoGoogleAnalyticsId || '');
+  const [seoGoogleAdsConversionId, setSeoGoogleAdsConversionId] = useState(siteConfig.seoGoogleAdsConversionId || '');
+  const [seoFacebookPixelId, setSeoFacebookPixelId] = useState(siteConfig.seoFacebookPixelId || '');
+  const [seoAnalytics, setSeoAnalytics] = useState<SeoAnalytics>({ totalVisits: 0, uniqueVisitors: 0, dailyVisits: [], topCategories: [], topProducts: [] });
+  const [isSeoAnalyticsLoading, setIsSeoAnalyticsLoading] = useState(false);
   const selectedPremiumPalette = PREMIUM_COLOR_PALETTES.find((palette) =>
     palette.accentColor.toLowerCase() === accentColor.toLowerCase() &&
     palette.accentHoverColor.toLowerCase() === accentHoverColor.toLowerCase() &&
@@ -581,11 +637,37 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
   const [smtpEmailId, setSmtpEmailId] = useState(siteConfig.smtpEmailId || '');
   const [smtpEncryption, setSmtpEncryption] = useState(siteConfig.smtpEncryption || '');
   const [smtpPassword, setSmtpPassword] = useState(siteConfig.smtpPassword || '');
+  const [testEmailTo, setTestEmailTo] = useState(siteConfig.smtpEmailId || user.email || '');
+  const [emailTestState, setEmailTestState] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [isTestingEmail, setIsTestingEmail] = useState(false);
+  const [selectedEmailTemplate, setSelectedEmailTemplate] = useState('orderInvoice');
+  const [emailTemplates, setEmailTemplates] = useState<Record<string, { subject: string; html: string }>>(
+    Object.fromEntries(
+      Object.entries(DEFAULT_EMAIL_TEMPLATES).map(([key, template]) => [
+        key,
+        {
+          subject: siteConfig.emailTemplates?.[key]?.subject || template.subject,
+          html: siteConfig.emailTemplates?.[key]?.html || template.html
+        }
+      ])
+    )
+  );
+  const [emailTemplateEditMode, setEmailTemplateEditMode] = useState<'visual' | 'html'>('visual');
 
   // --- Click2pay Config State ---
   const [click2payEnabled, setClick2payEnabled] = useState(siteConfig.click2payEnabled || false);
   const [click2payMerchantId, setClick2payMerchantId] = useState(siteConfig.click2payMerchantId || '');
   const [click2payApiKey, setClick2payApiKey] = useState(siteConfig.click2payApiKey || '');
+  const [adminNotificationsEnabled, setAdminNotificationsEnabled] = useState(siteConfig.adminNotificationsEnabled ?? true);
+  const [adminNotificationSound, setAdminNotificationSound] = useState(siteConfig.adminNotificationSound ?? true);
+  const [adminNotificationPollSeconds, setAdminNotificationPollSeconds] = useState(siteConfig.adminNotificationPollSeconds || 15);
+  const [whatsappNotificationsEnabled, setWhatsappNotificationsEnabled] = useState(siteConfig.whatsappNotificationsEnabled || false);
+  const [whatsappNotificationWebhookUrl, setWhatsappNotificationWebhookUrl] = useState(siteConfig.whatsappNotificationWebhookUrl || '');
+  const [telegramNotificationsEnabled, setTelegramNotificationsEnabled] = useState(siteConfig.telegramNotificationsEnabled || false);
+  const [telegramBotToken, setTelegramBotToken] = useState(siteConfig.telegramBotToken || '');
+  const [telegramChatId, setTelegramChatId] = useState(siteConfig.telegramChatId || '');
+  const [messengerNotificationsEnabled, setMessengerNotificationsEnabled] = useState(siteConfig.messengerNotificationsEnabled || false);
+  const [messengerNotificationWebhookUrl, setMessengerNotificationWebhookUrl] = useState(siteConfig.messengerNotificationWebhookUrl || '');
 
   const showAdminToast = (toast: { type: 'success' | 'error'; title: string; message: string }) => {
     setAdminToast(toast);
@@ -613,16 +695,29 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
     setAccentHoverColor(siteConfig.accentHoverColor || '#4338ca');
     setAccentSoftColor(siteConfig.accentSoftColor || '#e0e7ff');
     setAccentTextColor(siteConfig.accentTextColor || '#312e81');
+    setFontFamily(siteConfig.fontFamily || DEFAULT_SITE_FONT);
+    setCustomFonts(siteConfig.customFonts || []);
     setHeaderAnnouncement(siteConfig.headerAnnouncement || 'Bienvenue sur la première plateforme digitale en Tunisie !');
     setHeaderSearchPlaceholder(siteConfig.headerSearchPlaceholder || 'Rechercher jeux, items, comptes...');
     setHeaderCtaLabel(siteConfig.headerCtaLabel || "S'inscrire");
     setFooterTagline(siteConfig.footerTagline || 'Marketplace digitale premium');
     setFooterDescription(siteConfig.footerDescription || 'La destination premium pour vos comptes, licences, abonnements, outils IA et services digitaux en Tunisie.');
-    setFooterEmail(siteConfig.footerEmail || 'support@tunidex.tn');
+    setFooterEmail(siteConfig.footerEmail || 'support@tunibots.tn');
     setFooterPhone(siteConfig.footerPhone || '+216 00 000 000');
     setFooterWhatsapp(siteConfig.footerWhatsapp || '+216 00 000 000');
     setFooterAddress(siteConfig.footerAddress || 'Tunis, Tunisie');
     setFooterCopyright(siteConfig.footerCopyright || 'Tous droits réservés.');
+    setSeoTitle(siteConfig.seoTitle || '');
+    setSeoDescription(siteConfig.seoDescription || '');
+    setSeoKeywords(siteConfig.seoKeywords || '');
+    setSeoCanonicalUrl(siteConfig.seoCanonicalUrl || '');
+    setSeoOgImageUrl(siteConfig.seoOgImageUrl || '');
+    setSeoRobots(siteConfig.seoRobots || 'index,follow');
+    setSeoSitemapEnabled(siteConfig.seoSitemapEnabled ?? true);
+    setSeoOrganizationName(siteConfig.seoOrganizationName || '');
+    setSeoGoogleAnalyticsId(siteConfig.seoGoogleAnalyticsId || '');
+    setSeoGoogleAdsConversionId(siteConfig.seoGoogleAdsConversionId || '');
+    setSeoFacebookPixelId(siteConfig.seoFacebookPixelId || '');
     setSmtpMailerName(siteConfig.smtpMailerName || '');
     setSmtpHost(siteConfig.smtpHost || '');
     setSmtpDriver(siteConfig.smtpDriver || '');
@@ -631,9 +726,28 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
     setSmtpEmailId(siteConfig.smtpEmailId || '');
     setSmtpEncryption(siteConfig.smtpEncryption || '');
     setSmtpPassword(siteConfig.smtpPassword || '');
+    setEmailTemplates(Object.fromEntries(
+      Object.entries(DEFAULT_EMAIL_TEMPLATES).map(([key, template]) => [
+        key,
+        {
+          subject: siteConfig.emailTemplates?.[key]?.subject || template.subject,
+          html: siteConfig.emailTemplates?.[key]?.html || template.html
+        }
+      ])
+    ));
     setClick2payEnabled(siteConfig.click2payEnabled || false);
     setClick2payMerchantId(siteConfig.click2payMerchantId || '');
     setClick2payApiKey(siteConfig.click2payApiKey || '');
+    setAdminNotificationsEnabled(siteConfig.adminNotificationsEnabled ?? true);
+    setAdminNotificationSound(siteConfig.adminNotificationSound ?? true);
+    setAdminNotificationPollSeconds(siteConfig.adminNotificationPollSeconds || 15);
+    setWhatsappNotificationsEnabled(siteConfig.whatsappNotificationsEnabled || false);
+    setWhatsappNotificationWebhookUrl(siteConfig.whatsappNotificationWebhookUrl || '');
+    setTelegramNotificationsEnabled(siteConfig.telegramNotificationsEnabled || false);
+    setTelegramBotToken(siteConfig.telegramBotToken || '');
+    setTelegramChatId(siteConfig.telegramChatId || '');
+    setMessengerNotificationsEnabled(siteConfig.messengerNotificationsEnabled || false);
+    setMessengerNotificationWebhookUrl(siteConfig.messengerNotificationWebhookUrl || '');
   }, [siteConfig]);
 
   const addHeroSlide = () => {
@@ -713,6 +827,190 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
     });
   };
 
+  const saveEmailConfig = () => {
+    onUpdateSiteConfig({
+      smtpMailerName,
+      smtpHost,
+      smtpDriver: smtpDriver || 'smtp',
+      smtpPort,
+      smtpUsername,
+      smtpEmailId,
+      smtpEncryption: smtpEncryption || 'tls',
+      smtpPassword,
+      emailTemplates
+    });
+  };
+
+  const updateSelectedEmailTemplate = (patch: Partial<{ subject: string; html: string }>) => {
+    setEmailTemplates((current) => ({
+      ...current,
+      [selectedEmailTemplate]: {
+        ...(current[selectedEmailTemplate] || { subject: '', html: '' }),
+        ...patch
+      }
+    }));
+  };
+
+  const resetSelectedEmailTemplate = () => {
+    const fallback = DEFAULT_EMAIL_TEMPLATES[selectedEmailTemplate];
+    if (!fallback) return;
+    setEmailTemplates((current) => ({
+      ...current,
+      [selectedEmailTemplate]: { subject: fallback.subject, html: fallback.html }
+    }));
+  };
+
+  const insertEmailVariable = (variable: string) => {
+    updateSelectedEmailTemplate({
+      html: `${emailTemplates[selectedEmailTemplate]?.html || ''} <strong>{{${variable}}}</strong>`
+    });
+  };
+
+  const getEmailTemplatePreview = () => {
+    const sampleValues: Record<string, string> = {
+      username: 'Client TuniBots',
+      otpCode: '123456',
+      otpExpiryMinutes: '10',
+      orderNumber: 'CMD-2026-000123',
+      invoiceNumber: 'FAC-2026-000123',
+      invoiceDate: new Date().toLocaleDateString('fr-FR'),
+      customerName: 'Client TuniBots',
+      customerEmail: 'client@example.com',
+      customerPhone: '+216 XX XXX XXX',
+      paymentMethod: 'Flouci',
+      totalAmount: '99.00 TND',
+      amount: '99.00',
+      currency: 'TND',
+      itemsRows: '<tr><td style="padding:8px 0;border-bottom:1px solid #e2e8f0;">Produit exemple<div style="color:#64748b;font-size:12px;">Quantité: 1</div></td><td style="padding:8px 0;border-bottom:1px solid #e2e8f0;text-align:right;">99.00 TND</td></tr>'
+    };
+    return (emailTemplates[selectedEmailTemplate]?.html || '').replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, key) => sampleValues[key] || '');
+  };
+
+  const handleTestEmail = async () => {
+    setEmailTestState(null);
+    setIsTestingEmail(true);
+    try {
+      await onUpdateSiteConfig({
+        smtpMailerName,
+        smtpHost,
+        smtpDriver: smtpDriver || 'smtp',
+        smtpPort,
+        smtpUsername,
+        smtpEmailId,
+        smtpEncryption: smtpEncryption || 'tls',
+        smtpPassword,
+        emailTemplates
+      });
+      const result = await api.testEmailConfig(testEmailTo);
+      setEmailTestState({ type: 'success', message: result.message || 'Email de test envoyé.' });
+    } catch (error) {
+      setEmailTestState({
+        type: 'error',
+        message: error instanceof Error ? error.message : "Impossible d'envoyer l'email de test."
+      });
+    } finally {
+      setIsTestingEmail(false);
+    }
+  };
+
+  const saveNotificationConfig = () => {
+    onUpdateSiteConfig({
+      adminNotificationsEnabled,
+      adminNotificationSound,
+      adminNotificationPollSeconds: Number(adminNotificationPollSeconds) || 15,
+      whatsappNotificationsEnabled,
+      whatsappNotificationWebhookUrl,
+      telegramNotificationsEnabled,
+      telegramBotToken,
+      telegramChatId,
+      messengerNotificationsEnabled,
+      messengerNotificationWebhookUrl
+    });
+  };
+
+  const saveSeoConfig = () => {
+    onUpdateSiteConfig({
+      seoTitle,
+      seoDescription,
+      seoKeywords,
+      seoCanonicalUrl,
+      seoOgImageUrl,
+      seoRobots,
+      seoSitemapEnabled,
+      seoOrganizationName,
+      seoGoogleAnalyticsId,
+      seoGoogleAdsConversionId,
+      seoFacebookPixelId
+    });
+  };
+
+  const getFontDisplayName = (value: string) => {
+    const defaultOption = FONT_OPTIONS.find((option) => option.value === value);
+    if (defaultOption) return defaultOption.label;
+    return customFonts.find((font) => font.family === value)?.name || value.replace(/^"|"$/g, '');
+  };
+
+  const readFontFileAsDataUrl = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error('Impossible de lire le fichier font.'));
+      reader.readAsDataURL(file);
+    });
+
+  const handleFontUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const extension = file.name.split('.').pop()?.toLowerCase() || '';
+    if (!['ttf', 'otf', 'woff', 'woff2'].includes(extension)) {
+      setFontUploadError('Format accepté: .ttf, .otf, .woff ou .woff2');
+      return;
+    }
+
+    if (file.size > 2_000_000) {
+      setFontUploadError('Le fichier font doit rester sous 2 MB pour garder le site rapide.');
+      return;
+    }
+
+    try {
+      setFontUploadError('');
+      const dataUrl = await readFontFileAsDataUrl(file);
+      const cleanName = file.name.replace(/\.(ttf|otf|woff2?)$/i, '').replace(/[_-]+/g, ' ').trim() || 'Police personnalisée';
+      const family = `TuniBots Custom ${Date.now()}`;
+      const nextFont: CustomFont = {
+        id: Math.random().toString(36).slice(2, 10),
+        name: cleanName,
+        family,
+        dataUrl,
+        format: extension
+      };
+      setCustomFonts((current) => [...current, nextFont]);
+      setFontFamily(`"${family}"`);
+      event.target.value = '';
+    } catch (error) {
+      setFontUploadError(error instanceof Error ? error.message : 'Upload font impossible.');
+    }
+  };
+
+  const removeCustomFont = (fontId: string) => {
+    setCustomFonts((current) => {
+      const removed = current.find((font) => font.id === fontId);
+      const next = current.filter((font) => font.id !== fontId);
+      if (removed && fontFamily === `"${removed.family}"`) {
+        setFontFamily(DEFAULT_SITE_FONT);
+      }
+      return next;
+    });
+  };
+
+  const saveFontConfig = () => {
+    onUpdateSiteConfig({
+      fontFamily,
+      customFonts
+    });
+  };
+
   const moveStoreSection = (sectionId: string, direction: 'up' | 'down') => {
     setStoreSections((prev) => {
       const ordered = [...(prev.length > 0 ? prev : getMergedStoreSections(siteConfig))].sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -727,6 +1025,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
       return next.sort((a, b) => (a.order || 0) - (b.order || 0));
     });
   };
+
+  useEffect(() => {
+    if (!focusOrderId) return;
+    setActiveTab('orders');
+    setExpandedOrderId(focusOrderId);
+    onFocusOrderHandled?.();
+  }, [focusOrderId, onFocusOrderHandled]);
 
   useEffect(() => {
     if (activeTab === 'users' && user.role === UserRole.ADMIN) {
@@ -756,6 +1061,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
             }
         };
         fetchStats();
+    }
+    if (activeTab === 'seo') {
+      const fetchSeoAnalytics = async () => {
+        setIsSeoAnalyticsLoading(true);
+        try {
+          setSeoAnalytics(await api.getSeoAnalytics());
+        } catch (err) {
+          console.error('Failed to fetch SEO analytics:', err);
+        } finally {
+          setIsSeoAnalyticsLoading(false);
+        }
+      };
+      fetchSeoAnalytics();
     }
   }, [activeTab, user.role]);
 
@@ -1172,7 +1490,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `tunidex-data-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      link.download = `tunibots-data-${new Date().toISOString().slice(0, 10)}.xlsx`;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -1277,7 +1595,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
     setNewListingDiscount(((listing.discountValue ?? listing.discountPercent) || 0).toString());
     setNewListingCatId(listing.categoryId);
     setNewListingSubCatId(listing.subCategoryId || '');
-    setNewListingImageUrl(listing.imageUrl);
+    setNewListingImageUrl(listing.imageUrl || '');
     setNewListingLogoUrl(listing.logoUrl || '');
     setNewListingGallery(Array.isArray(listing.gallery) ? listing.gallery.join(', ') : '');
     setNewListingIsInstant(listing.isInstant);
@@ -1365,6 +1683,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
       });
       return;
     }
+    if (!newListingIsPackage && !newListingImageUrl.trim()) {
+      showAdminToast({
+        type: 'error',
+        title: 'Image requise',
+        message: 'Ajoutez une image principale pour les produits simples.'
+      });
+      return;
+    }
     const cleanVariants = newListingVariants
       .map((variant, index) => ({
         name: variant.name.trim(),
@@ -1393,8 +1719,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
         discountType: newListingDiscountType,
         discountValue: newListingDiscountType === DiscountType.NONE ? 0 : parseFloat(newListingDiscount) || 0,
         discountPercent: newListingDiscountType === DiscountType.PERCENT ? parseInt(newListingDiscount, 10) || 0 : 0,
-        imageUrl: newListingImageUrl,
+        imageUrl: newListingImageUrl.trim(),
         logoUrl: newListingLogoUrl,
+        cardTemplate: 'default',
         gallery: galleryArray,
         stock: newListingIsPackage ? 0 : (newListingProductType === ProductType.LOGIN_CREDENTIALS ? credentials.length : (newListingProductType === ProductType.KEY ? 999 : 1)),
         deliveryTimeHours: 24,
@@ -1573,6 +1900,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
             <>
               <button onClick={() => setActiveTab('customization')} className={`w-full flex items-center space-x-3 px-3 py-2 rounded-md ${activeTab === 'customization' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'}`}><LucideIcons.Images size={18} /> <span>Customisation</span></button>
               <button onClick={() => setActiveTab('store-config')} className={`w-full flex items-center space-x-3 px-3 py-2 rounded-md ${activeTab === 'store-config' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'}`}><LucideIcons.Store size={18} /> <span>Store config</span></button>
+              <button onClick={() => setActiveTab('email-config')} className={`w-full flex items-center space-x-3 px-3 py-2 rounded-md ${activeTab === 'email-config' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'}`}><LucideIcons.Mail size={18} /> <span>Email config</span></button>
+              <button onClick={() => setActiveTab('notification-config')} className={`w-full flex items-center space-x-3 px-3 py-2 rounded-md ${activeTab === 'notification-config' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'}`}><LucideIcons.BellRing size={18} /> <span>Notifications</span></button>
+              <button onClick={() => setActiveTab('seo')} className={`w-full flex items-center space-x-3 px-3 py-2 rounded-md ${activeTab === 'seo' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'}`}><LucideIcons.SearchCheck size={18} /> <span>SEO</span></button>
               <button onClick={() => setActiveTab('settings')} className={`w-full flex items-center space-x-3 px-3 py-2 rounded-md ${activeTab === 'settings' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'}`}><Settings size={18} /> <span>Paramètres</span></button>
               <button onClick={() => setActiveTab('data')} className={`w-full flex items-center space-x-3 px-3 py-2 rounded-md ${activeTab === 'data' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'}`}><LucideIcons.Database size={18} /> <span>Données</span></button>
             </>
@@ -1801,6 +2131,425 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
           </div>
         )}
 
+        {activeTab === 'email-config' && user.role === UserRole.ADMIN && (
+          <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <div className="inline-flex items-center gap-2 rounded-full bg-indigo-50 px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-indigo-700">
+                    <LucideIcons.Mail size={14} />
+                    Email config
+                  </div>
+                  <h2 className="mt-4 text-2xl font-black text-slate-900">Gestion mailing TuniBots</h2>
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
+                    Configurez le SMTP, testez l'envoi et gardez une vue claire sur les templates utilisés par la plateforme.
+                  </p>
+                </div>
+                <div className={`rounded-2xl border px-4 py-3 text-sm font-bold ${smtpHost && smtpPort && smtpEmailId ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+                  {smtpHost && smtpPort && smtpEmailId ? 'SMTP configuré' : 'SMTP incomplet'}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-8 xl:grid-cols-[1.2fr_0.8fr]">
+              <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+                <div className="border-b border-slate-100 px-6 py-4">
+                  <h3 className="text-lg font-black text-slate-900">SMTP</h3>
+                  <p className="mt-1 text-sm text-slate-500">Ces paramètres sont utilisés pour les OTP, les factures et les emails système.</p>
+                </div>
+                <div className="grid gap-5 p-6 md:grid-cols-2">
+                  <div>
+                    <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">Nom expéditeur</label>
+                    <input className="w-full rounded-xl border border-slate-200 bg-slate-50/40 px-4 py-3 outline-none focus:border-indigo-500" value={smtpMailerName} onChange={(e) => setSmtpMailerName(e.target.value)} placeholder="TuniBots Support" />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">Email expéditeur</label>
+                    <input type="email" className="w-full rounded-xl border border-slate-200 bg-slate-50/40 px-4 py-3 outline-none focus:border-indigo-500" value={smtpEmailId} onChange={(e) => setSmtpEmailId(e.target.value)} placeholder="support@tunibots.com" />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">Hôte SMTP</label>
+                    <input className="w-full rounded-xl border border-slate-200 bg-slate-50/40 px-4 py-3 outline-none focus:border-indigo-500" value={smtpHost} onChange={(e) => setSmtpHost(e.target.value)} placeholder="smtp.gmail.com" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">Port</label>
+                      <input className="w-full rounded-xl border border-slate-200 bg-slate-50/40 px-4 py-3 outline-none focus:border-indigo-500" value={smtpPort} onChange={(e) => setSmtpPort(e.target.value)} placeholder="587" />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">Cryptage</label>
+                      <select className="w-full rounded-xl border border-slate-200 bg-slate-50/40 px-4 py-3 outline-none focus:border-indigo-500" value={smtpEncryption || 'tls'} onChange={(e) => setSmtpEncryption(e.target.value)}>
+                        <option value="tls">TLS</option>
+                        <option value="ssl">SSL</option>
+                        <option value="none">Aucun</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">Utilisateur SMTP</label>
+                    <input className="w-full rounded-xl border border-slate-200 bg-slate-50/40 px-4 py-3 outline-none focus:border-indigo-500" value={smtpUsername} onChange={(e) => setSmtpUsername(e.target.value)} placeholder="souvent identique à l'email" />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">Mot de passe / App password</label>
+                    <input type="password" className="w-full rounded-xl border border-slate-200 bg-slate-50/40 px-4 py-3 outline-none focus:border-indigo-500" value={smtpPassword} onChange={(e) => setSmtpPassword(e.target.value)} placeholder="••••••••••••" />
+                  </div>
+                </div>
+                <div className="flex flex-col gap-3 border-t border-slate-100 px-6 py-5 sm:flex-row sm:justify-end">
+                  <button type="button" onClick={saveEmailConfig} className="rounded-xl border border-slate-200 px-5 py-3 text-sm font-black text-slate-700 hover:bg-slate-50">
+                    Sauvegarder SMTP
+                  </button>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+                <div className="border-b border-slate-100 px-6 py-4">
+                  <h3 className="text-lg font-black text-slate-900">Test d'envoi</h3>
+                  <p className="mt-1 text-sm text-slate-500">Sauvegarde la config puis envoie un email de test.</p>
+                </div>
+                <div className="space-y-4 p-6">
+                  <div>
+                    <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">Email destinataire</label>
+                    <input type="email" className="w-full rounded-xl border border-slate-200 bg-slate-50/40 px-4 py-3 outline-none focus:border-indigo-500" value={testEmailTo} onChange={(e) => setTestEmailTo(e.target.value)} placeholder="votre@email.com" />
+                  </div>
+                  {emailTestState && (
+                    <div className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${emailTestState.type === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-700'}`}>
+                      {emailTestState.message}
+                    </div>
+                  )}
+                  <button type="button" onClick={handleTestEmail} disabled={isTestingEmail} className="flex w-full items-center justify-center rounded-xl bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-indigo-600 disabled:opacity-60">
+                    {isTestingEmail ? <Loader2 size={18} className="mr-2 animate-spin" /> : <LucideIcons.Send size={18} className="mr-2" />}
+                    Tester l'envoi
+                  </button>
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs leading-5 text-amber-800">
+                    Si vous ne recevez rien, vérifiez l'hôte, le port, le cryptage et utilisez un mot de passe d'application pour Gmail/Outlook.
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+              <div className="border-b border-slate-100 px-6 py-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <h3 className="text-lg font-black text-slate-900">Templates email éditables</h3>
+                    <p className="mt-1 text-sm text-slate-500">Modifiez le sujet et le HTML utilisés lors des envois réels.</p>
+                  </div>
+                  <button type="button" onClick={resetSelectedEmailTemplate} className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-black text-slate-600 hover:bg-slate-50">
+                    Réinitialiser ce template
+                  </button>
+                </div>
+              </div>
+              <div className="grid gap-6 p-6 xl:grid-cols-[280px_1fr]">
+                <div className="space-y-3">
+                  {Object.entries(DEFAULT_EMAIL_TEMPLATES).map(([key, template]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setSelectedEmailTemplate(key)}
+                      className={`w-full rounded-2xl border p-4 text-left transition ${selectedEmailTemplate === key ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-slate-300'}`}
+                    >
+                      <div className="text-xs font-black uppercase tracking-[0.16em]">{template.label}</div>
+                      <div className="mt-2 text-xs leading-5 opacity-80">
+                        {key === 'registrationOtp' && 'Création de compte client'}
+                        {key === 'orderInvoice' && 'Validation du paiement panier'}
+                        {key === 'testEmail' && "Bouton tester l'envoi"}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="space-y-5">
+                  <div>
+                    <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">Sujet</label>
+                    <input
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50/40 px-4 py-3 outline-none focus:border-indigo-500"
+                      value={emailTemplates[selectedEmailTemplate]?.subject || ''}
+                      onChange={(e) => updateSelectedEmailTemplate({ subject: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <div className="mb-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">Contenu du template</label>
+                      <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1">
+                        <button
+                          type="button"
+                          onClick={() => setEmailTemplateEditMode('visual')}
+                          className={`rounded-lg px-3 py-1.5 text-xs font-black ${emailTemplateEditMode === 'visual' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500'}`}
+                        >
+                          Visuel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEmailTemplateEditMode('html')}
+                          className={`rounded-lg px-3 py-1.5 text-xs font-black ${emailTemplateEditMode === 'html' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500'}`}
+                        >
+                          HTML avancé
+                        </button>
+                      </div>
+                    </div>
+                    {emailTemplateEditMode === 'visual' ? (
+                      <RichTextEditor
+                        label=""
+                        value={emailTemplates[selectedEmailTemplate]?.html || ''}
+                        onChange={(value) => updateSelectedEmailTemplate({ html: value })}
+                      />
+                    ) : (
+                      <textarea
+                        className="min-h-[320px] w-full rounded-xl border border-slate-200 bg-slate-950 px-4 py-3 font-mono text-xs leading-5 text-slate-100 outline-none focus:border-indigo-500"
+                        value={emailTemplates[selectedEmailTemplate]?.html || ''}
+                        onChange={(e) => updateSelectedEmailTemplate({ html: e.target.value })}
+                      />
+                    )}
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="mb-3 text-xs font-black uppercase tracking-[0.18em] text-slate-500">Variables disponibles</div>
+                    <div className="flex flex-wrap gap-2">
+                      {DEFAULT_EMAIL_TEMPLATES[selectedEmailTemplate]?.variables.length ? DEFAULT_EMAIL_TEMPLATES[selectedEmailTemplate].variables.map((variable) => (
+                        <button
+                          key={variable}
+                          type="button"
+                          onClick={() => insertEmailVariable(variable)}
+                          className="rounded-full border border-slate-200 bg-white px-3 py-1.5 font-mono text-xs font-bold text-slate-600 hover:border-indigo-300 hover:text-indigo-700"
+                        >
+                          + {`{{${variable}}}`}
+                        </button>
+                      )) : (
+                        <span className="text-sm text-slate-500">Aucune variable requise pour ce template.</span>
+                      )}
+                    </div>
+                    <div className="mt-3 text-xs leading-5 text-slate-500">
+                      Cliquez sur une variable pour l'ajouter au contenu. Les variables seront remplacées automatiquement à l'envoi.
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                    <div className="mb-3 text-xs font-black uppercase tracking-[0.18em] text-slate-500">Aperçu avec données exemple</div>
+                    <div
+                      className="email-preview max-h-[360px] overflow-auto rounded-xl border border-slate-100 bg-slate-50 p-4 text-sm leading-6 text-slate-700"
+                      dangerouslySetInnerHTML={{ __html: sanitizeRichText(getEmailTemplatePreview()) }}
+                    />
+                  </div>
+                  <div className="flex justify-end">
+                    <button type="button" onClick={saveEmailConfig} className="rounded-xl bg-indigo-600 px-6 py-3 text-sm font-black text-white hover:bg-indigo-700">
+                      Sauvegarder les templates
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'notification-config' && user.role === UserRole.ADMIN && (
+          <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <div className="inline-flex items-center gap-2 rounded-full bg-amber-50 px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-amber-700">
+                    <LucideIcons.BellRing size={14} />
+                    Notifications commandes
+                  </div>
+                  <h2 className="mt-4 text-2xl font-black text-slate-900">Alertes nouvelles commandes</h2>
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
+                    Activez les notifications dashboard, le son, et les bots externes pour recevoir chaque commande à traiter.
+                  </p>
+                </div>
+                <button type="button" onClick={saveNotificationConfig} className="rounded-xl bg-slate-950 px-6 py-3 text-sm font-black text-white hover:bg-indigo-600">
+                  Sauvegarder
+                </button>
+              </div>
+            </div>
+
+            <div className="grid gap-6 xl:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h3 className="text-lg font-black text-slate-900">Dashboard admin</h3>
+                <p className="mt-1 text-sm text-slate-500">Notification interne dès qu'une nouvelle commande arrive.</p>
+                <div className="mt-6 space-y-4">
+                  <label className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                    <span className="font-bold text-slate-800">Activer les notifications dashboard</span>
+                    <input type="checkbox" className="h-5 w-5 accent-indigo-600" checked={adminNotificationsEnabled} onChange={(e) => setAdminNotificationsEnabled(e.target.checked)} />
+                  </label>
+                  <label className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                    <span className="font-bold text-slate-800">Notification sonore</span>
+                    <input type="checkbox" className="h-5 w-5 accent-indigo-600" checked={adminNotificationSound} onChange={(e) => setAdminNotificationSound(e.target.checked)} />
+                  </label>
+                  <div>
+                    <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">Fréquence de vérification</label>
+                    <input type="number" min={5} max={120} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3" value={adminNotificationPollSeconds} onChange={(e) => setAdminNotificationPollSeconds(Number(e.target.value))} />
+                    <p className="mt-2 text-xs text-slate-500">Minimum conseillé: 5 secondes.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h3 className="text-lg font-black text-slate-900">Telegram bot</h3>
+                <p className="mt-1 text-sm text-slate-500">Utilise l'API Telegram officielle via bot token + chat id.</p>
+                <div className="mt-6 space-y-4">
+                  <label className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                    <span className="font-bold text-slate-800">Activer Telegram</span>
+                    <input type="checkbox" className="h-5 w-5 accent-indigo-600" checked={telegramNotificationsEnabled} onChange={(e) => setTelegramNotificationsEnabled(e.target.checked)} />
+                  </label>
+                  <input className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3" value={telegramBotToken} onChange={(e) => setTelegramBotToken(e.target.value)} placeholder="Bot token" />
+                  <input className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3" value={telegramChatId} onChange={(e) => setTelegramChatId(e.target.value)} placeholder="Chat ID" />
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h3 className="text-lg font-black text-slate-900">WhatsApp bot</h3>
+                <p className="mt-1 text-sm text-slate-500">Votre bot doit exposer un webhook qui accepte un JSON.</p>
+                <div className="mt-6 space-y-4">
+                  <label className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                    <span className="font-bold text-slate-800">Activer WhatsApp</span>
+                    <input type="checkbox" className="h-5 w-5 accent-indigo-600" checked={whatsappNotificationsEnabled} onChange={(e) => setWhatsappNotificationsEnabled(e.target.checked)} />
+                  </label>
+                  <input className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3" value={whatsappNotificationWebhookUrl} onChange={(e) => setWhatsappNotificationWebhookUrl(e.target.value)} placeholder="https://votre-bot/webhook/order" />
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h3 className="text-lg font-black text-slate-900">Messenger bot</h3>
+                <p className="mt-1 text-sm text-slate-500">Votre bot Messenger doit exposer un webhook qui accepte un JSON.</p>
+                <div className="mt-6 space-y-4">
+                  <label className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                    <span className="font-bold text-slate-800">Activer Messenger</span>
+                    <input type="checkbox" className="h-5 w-5 accent-indigo-600" checked={messengerNotificationsEnabled} onChange={(e) => setMessengerNotificationsEnabled(e.target.checked)} />
+                  </label>
+                  <input className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3" value={messengerNotificationWebhookUrl} onChange={(e) => setMessengerNotificationWebhookUrl(e.target.value)} placeholder="https://votre-bot/webhook/order" />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'seo' && user.role === UserRole.ADMIN && (
+          <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-emerald-700">
+                    <LucideIcons.SearchCheck size={14} />
+                    SEO & marketing
+                  </div>
+                  <h2 className="mt-4 text-2xl font-black text-slate-900">Référencement, Ads et visites</h2>
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
+                    Suivez les pages consultées, identifiez les produits et catégories qui attirent l'attention, puis configurez les balises utiles au SEO et aux campagnes marketing.
+                  </p>
+                </div>
+                <button type="button" onClick={saveSeoConfig} className="rounded-xl bg-slate-950 px-6 py-3 text-sm font-black text-white hover:bg-emerald-600">
+                  Sauvegarder SEO
+                </button>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-4">
+              {[
+                ['Visites 30 jours', seoAnalytics.totalVisits, 'Pages vues'],
+                ['Visiteurs uniques', seoAnalytics.uniqueVisitors, 'Navigateurs reconnus'],
+                ['Catégories vues', seoAnalytics.topCategories.reduce((sum, item) => sum + item.views, 0), 'Consultations catégorie'],
+                ['Produits vus', seoAnalytics.topProducts.reduce((sum, item) => sum + item.views, 0), 'Consultations produit']
+              ].map(([label, value, hint]) => (
+                <div key={label} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <div className="text-xs font-bold uppercase tracking-widest text-slate-400">{label}</div>
+                  <div className="mt-2 text-2xl font-black text-slate-900">{value}</div>
+                  <div className="mt-1 text-xs text-slate-500">{hint}</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <div className="mb-5 flex items-center justify-between">
+                  <div>
+                    <h3 className="text-lg font-black text-slate-900">Historique des visites</h3>
+                    <p className="mt-1 text-sm text-slate-500">Visites, produits et catégories consultés sur les 30 derniers jours.</p>
+                  </div>
+                  {isSeoAnalyticsLoading && <Loader2 size={18} className="animate-spin text-slate-400" />}
+                </div>
+                <div className="h-72">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={seoAnalytics.dailyVisits.map((item) => ({ ...item, name: new Date(item.date).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }) }))}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="name" fontSize={12} />
+                      <YAxis fontSize={12} />
+                      <Tooltip />
+                      <Bar dataKey="visits" name="Visites" fill="#0f172a" radius={[6, 6, 0, 0]} />
+                      <Bar dataKey="productViews" name="Produits" fill="#10b981" radius={[6, 6, 0, 0]} />
+                      <Bar dataKey="categoryViews" name="Catégories" fill="#6366f1" radius={[6, 6, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                  <h3 className="text-lg font-black text-slate-900">Catégories les plus consultées</h3>
+                  <div className="mt-4 space-y-3">
+                    {seoAnalytics.topCategories.map((category, index) => (
+                      <div key={`${category.id}-${index}`} className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3">
+                        <div>
+                          <div className="font-bold text-slate-900">{category.name}</div>
+                          <div className="text-xs text-slate-500">{category.slug || 'sans slug'}</div>
+                        </div>
+                        <div className="text-sm font-black text-emerald-700">{category.views}</div>
+                      </div>
+                    ))}
+                    {seoAnalytics.topCategories.length === 0 && <div className="text-sm text-slate-400">Aucune visite catégorie enregistrée.</div>}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                  <h3 className="text-lg font-black text-slate-900">Produits les plus consultés</h3>
+                  <div className="mt-4 space-y-3">
+                    {seoAnalytics.topProducts.map((product, index) => (
+                      <div key={`${product.id}-${index}`} className="flex items-center gap-3 rounded-xl bg-slate-50 px-4 py-3">
+                        {product.imageUrl && <img src={product.imageUrl} alt="" className="h-10 w-10 rounded-lg object-cover" referrerPolicy="no-referrer" />}
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-bold text-slate-900">{product.title}</div>
+                          <div className="text-xs text-slate-500">{product.categoryName || 'Sans catégorie'}</div>
+                        </div>
+                        <div className="text-sm font-black text-indigo-700">{product.views}</div>
+                      </div>
+                    ))}
+                    {seoAnalytics.topProducts.length === 0 && <div className="text-sm text-slate-400">Aucune visite produit enregistrée.</div>}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-6 xl:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h3 className="text-lg font-black text-slate-900">Balises SEO globales</h3>
+                <div className="mt-5 space-y-4">
+                  <input className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3" value={seoTitle} onChange={(e) => setSeoTitle(e.target.value)} placeholder="Titre SEO du site" />
+                  <textarea className="min-h-[110px] w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3" value={seoDescription} onChange={(e) => setSeoDescription(e.target.value)} placeholder="Meta description principale" />
+                  <textarea className="min-h-[90px] w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3" value={seoKeywords} onChange={(e) => setSeoKeywords(e.target.value)} placeholder="Mots-clés séparés par des virgules" />
+                  <input className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3" value={seoCanonicalUrl} onChange={(e) => setSeoCanonicalUrl(e.target.value)} placeholder="URL canonique, ex: https://votre-domaine.com" />
+                  <ImageInput label="Image Open Graph" value={seoOgImageUrl} onChange={setSeoOgImageUrl} placeholder="Image de partage social" uploadPreset="default" />
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h3 className="text-lg font-black text-slate-900">Ads, robots et tracking</h3>
+                <div className="mt-5 space-y-4">
+                  <input className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3" value={seoOrganizationName} onChange={(e) => setSeoOrganizationName(e.target.value)} placeholder="Nom organisation pour Schema.org" />
+                  <select className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3" value={seoRobots} onChange={(e) => setSeoRobots(e.target.value)}>
+                    <option value="index,follow">index, follow</option>
+                    <option value="noindex,follow">noindex, follow</option>
+                    <option value="noindex,nofollow">noindex, nofollow</option>
+                  </select>
+                  <label className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                    <span className="font-bold text-slate-800">Sitemap activé</span>
+                    <input type="checkbox" className="h-5 w-5 accent-emerald-600" checked={seoSitemapEnabled} onChange={(e) => setSeoSitemapEnabled(e.target.checked)} />
+                  </label>
+                  <input className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3" value={seoGoogleAnalyticsId} onChange={(e) => setSeoGoogleAnalyticsId(e.target.value)} placeholder="Google Analytics ID, ex: G-XXXXXXXXXX" />
+                  <input className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3" value={seoGoogleAdsConversionId} onChange={(e) => setSeoGoogleAdsConversionId(e.target.value)} placeholder="Google Ads conversion ID, ex: AW-XXXXXXXXX" />
+                  <input className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3" value={seoFacebookPixelId} onChange={(e) => setSeoFacebookPixelId(e.target.value)} placeholder="Meta/Facebook Pixel ID" />
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs leading-5 text-amber-800">
+                    Le tracking Ads est sauvegardé ici pour centraliser la configuration. Les scripts peuvent ensuite être activés proprement selon votre politique cookies.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
          {activeTab === 'settings' && user.role === UserRole.ADMIN && (
             <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
                 {/* Section 1: Logo & Icone du Site */}
@@ -1827,7 +2576,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                                     className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition bg-slate-50/30 font-medium"
                                     value={siteName}
                                     onChange={(e) => setSiteName(e.target.value)}
-                                    placeholder="Tunidex"
+                                    placeholder="TuniBots"
                                 />
                             </div>
                             <div className="grid grid-cols-1 gap-6">
@@ -1944,7 +2693,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                                         className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-slate-50/30 transition-all"
                                         value={smtpMailerName}
                                         onChange={(e) => setSmtpMailerName(e.target.value)}
-                                        placeholder="Tunidex Support"
+                                        placeholder="TuniBots Support"
                                     />
                                 </div>
                                 <div>
@@ -2152,6 +2901,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                         className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${customizationSection === 'colors' ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:border-slate-300'}`}
                     >
                         Couleurs
+                    </button>
+                    <button
+                        onClick={() => setCustomizationSection('font')}
+                        className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${customizationSection === 'font' ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:border-slate-300'}`}
+                    >
+                        Font
                     </button>
                     <button
                         onClick={() => setCustomizationSection('layout')}
@@ -2597,7 +3352,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                                             }`}
                                         >
                                             <div className="flex gap-3">
-                                                <img src={listing.imageUrl} alt="" className="h-14 w-14 rounded-xl object-cover bg-slate-100" />
+                                                <div className="h-14 w-14 overflow-hidden rounded-xl bg-slate-100">
+                                                  <ListingImage listing={listing} alt="" />
+                                                </div>
                                                 <div className="min-w-0 flex-1">
                                                     <div className="line-clamp-2 text-xs font-black text-slate-900">{listing.title}</div>
                                                     <div className="mt-1 truncate text-[10px] font-bold text-slate-400">{listing.game || 'Produit'}</div>
@@ -2702,7 +3459,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                                         <div className="flex items-center gap-3">
                                             <div className="h-10 w-10 rounded-2xl flex items-center justify-center text-white font-black" style={{ backgroundColor: accentColor }}>T</div>
                                             <div>
-                                                <div className="font-bold text-slate-900">Tunidex Theme</div>
+                                                <div className="font-bold text-slate-900">TuniBots Theme</div>
                                                 <div className="text-sm text-slate-500">Header, boutons, login, logout</div>
                                             </div>
                                         </div>
@@ -2711,6 +3468,95 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                                     <div className="mt-5 rounded-2xl p-4" style={{ backgroundColor: accentSoftColor }}>
                                         <div className="font-bold" style={{ color: accentTextColor }}>Surface premium</div>
                                         <div className="text-sm text-slate-600 mt-1">Cette teinte habille les surfaces douces du thème.</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                )}
+
+                {customizationSection === 'font' && (
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
+                        <h2 className="text-lg font-bold text-slate-900 leading-tight">Font du site</h2>
+                        <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">Police globale, upload TTF/OTF/WOFF et aperçu immédiat</p>
+                    </div>
+                    <div className="grid grid-cols-1 gap-8 p-6 xl:grid-cols-[0.85fr_1.15fr]">
+                        <div className="space-y-5">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5 tracking-wider">Police active</label>
+                                <select
+                                    className="theme-focus w-full rounded-xl border border-slate-200 bg-slate-50/30 px-4 py-3 font-medium text-slate-700"
+                                    value={fontFamily}
+                                    onChange={(event) => setFontFamily(event.target.value)}
+                                >
+                                    {FONT_OPTIONS.map((option) => (
+                                        <option key={option.label} value={option.value}>{option.label}</option>
+                                    ))}
+                                    {customFonts.length > 0 && <option disabled>──────── Polices ajoutées ────────</option>}
+                                    {customFonts.map((font) => (
+                                        <option key={font.id} value={`"${font.family}"`}>{font.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5">
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-2 tracking-wider">Ajouter un fichier font</label>
+                                <input
+                                    type="file"
+                                    accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2"
+                                    onChange={handleFontUpload}
+                                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700"
+                                />
+                                <p className="mt-3 text-xs leading-5 text-slate-500">
+                                    Formats acceptés: TTF, OTF, WOFF, WOFF2. Taille max: 2 MB. Après upload, la police est ajoutée à la liste et sélectionnée automatiquement.
+                                </p>
+                                {fontUploadError && <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-bold text-red-700">{fontUploadError}</div>}
+                            </div>
+
+                            {customFonts.length > 0 && (
+                                <div className="space-y-3">
+                                    <div className="text-xs font-black uppercase tracking-widest text-slate-400">Polices personnalisées</div>
+                                    {customFonts.map((font) => (
+                                        <div key={font.id} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                            <div className="min-w-0">
+                                                <div className="truncate text-sm font-black text-slate-900">{font.name}</div>
+                                                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{font.format}</div>
+                                            </div>
+                                            <button type="button" onClick={() => removeCustomFont(font.id)} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-red-600 hover:bg-red-50">
+                                                Supprimer
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            <button type="button" onClick={saveFontConfig} className="w-full rounded-xl bg-slate-950 px-6 py-3 text-sm font-black text-white hover:bg-indigo-600">
+                                Sauvegarder le font
+                            </button>
+                        </div>
+
+                        <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-6">
+                            <div className="mb-4 text-xs font-black uppercase tracking-widest text-slate-400">Aperçu typographique</div>
+                            <div className="rounded-2xl border border-slate-100 bg-white p-6 shadow-sm" style={{ fontFamily }}>
+                                <div className="text-xs font-black uppercase tracking-[0.25em] text-indigo-600">{getFontDisplayName(fontFamily)}</div>
+                                <h3 className="mt-4 text-4xl font-black leading-tight text-slate-950">TuniBots Marketplace</h3>
+                                <p className="mt-4 max-w-xl text-base font-semibold leading-7 text-slate-600">
+                                    Achetez des comptes, licences, abonnements et services digitaux avec une interface premium, rapide et lisible.
+                                </p>
+                                <div className="mt-6 flex flex-wrap gap-3">
+                                    <button type="button" className="rounded-xl bg-slate-950 px-5 py-3 text-sm font-black text-white">Bouton principal</button>
+                                    <button type="button" className="rounded-xl border border-slate-200 px-5 py-3 text-sm font-black text-slate-700">Bouton secondaire</button>
+                                </div>
+                                <div className="mt-6 grid grid-cols-2 gap-3 text-sm">
+                                    <div className="rounded-xl bg-slate-50 p-4">
+                                        <div className="text-xs font-black uppercase text-slate-400">Produit</div>
+                                        <div className="mt-1 text-lg font-black text-slate-900">Pack Premium</div>
+                                    </div>
+                                    <div className="rounded-xl bg-indigo-50 p-4">
+                                        <div className="text-xs font-black uppercase text-indigo-500">Prix</div>
+                                        <div className="mt-1 text-lg font-black text-slate-900">99.00 TND</div>
                                     </div>
                                 </div>
                             </div>
@@ -2750,7 +3596,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                                     <div className="flex items-center justify-between gap-4 px-5 py-4">
                                         <div className="flex items-center gap-3">
                                             <div className="h-10 w-10 rounded-xl flex items-center justify-center text-white font-black" style={{ backgroundColor: accentColor }}>{siteName.charAt(0) || 'T'}</div>
-                                            <div className="font-black text-slate-900">{siteName || 'Tunidex'}</div>
+                                            <div className="font-black text-slate-900">{siteName || 'TuniBots'}</div>
                                         </div>
                                         <div className="hidden sm:flex flex-1 max-w-xs rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-400">
                                             {headerSearchPlaceholder || 'Rechercher...'}
@@ -2809,7 +3655,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                                             <div className="flex items-center gap-3 mb-4">
                                                 <div className="h-11 w-11 rounded-2xl flex items-center justify-center text-white font-black" style={{ backgroundColor: accentColor }}>{siteName.charAt(0) || 'T'}</div>
                                                 <div>
-                                                    <div className="text-xl font-black">{siteName || 'Tunidex'}</div>
+                                                    <div className="text-xl font-black">{siteName || 'TuniBots'}</div>
                                                     <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">{footerTagline}</div>
                                                 </div>
                                             </div>
@@ -2824,7 +3670,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                                         </div>
                                     </div>
                                     <div className="mt-8 border-t border-white/10 pt-4 text-xs text-slate-500">
-                                        © {new Date().getFullYear()} {siteName || 'Tunidex'}. {footerCopyright}
+                                        © {new Date().getFullYear()} {siteName || 'TuniBots'}. {footerCopyright}
                                     </div>
                                 </div>
                             </div>
@@ -2835,7 +3681,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
 
                 <div className="flex justify-end pt-6 sticky bottom-0 bg-slate-50/80 backdrop-blur-md p-4 -mx-4 rounded-t-3xl border-t border-slate-200 z-10">
                     <button
-                        onClick={() => onUpdateSiteConfig({ heroSlides, heroPromoBanners, floatingBrandCards, heroSlideHeight, coverBackgroundUrl, coverListingIds, accentColor, accentHoverColor, accentSoftColor, accentTextColor, headerAnnouncement, headerSearchPlaceholder, headerCtaLabel, footerTagline, footerDescription, footerEmail, footerPhone, footerWhatsapp, footerAddress, footerCopyright })}
+                        onClick={() => onUpdateSiteConfig({ heroSlides, heroPromoBanners, floatingBrandCards, heroSlideHeight, coverBackgroundUrl, coverListingIds, accentColor, accentHoverColor, accentSoftColor, accentTextColor, fontFamily, customFonts, headerAnnouncement, headerSearchPlaceholder, headerCtaLabel, footerTagline, footerDescription, footerEmail, footerPhone, footerWhatsapp, footerAddress, footerCopyright })}
                         className="bg-indigo-600 text-white font-black py-4 px-16 rounded-2xl hover:bg-indigo-700 transition shadow-2xl shadow-indigo-300 flex items-center justify-center transform hover:-translate-y-1 active:scale-95 group"
                     >
                         <LucideIcons.Save size={20} className="mr-3 group-hover:rotate-12 transition-transform" />
@@ -3497,7 +4343,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                             checked={checked}
                             onChange={() => togglePackageItem(listing.id)}
                           />
-                          <img src={listing.imageUrl} className="h-12 w-12 rounded-lg object-cover border border-slate-100" />
+                          <div className="h-12 w-12 overflow-hidden rounded-lg border border-slate-100">
+                            <ListingImage listing={listing} />
+                          </div>
                           <div className="min-w-0 flex-1">
                             <div className="font-bold text-slate-900 truncate">{listing.title}</div>
                             <div className="text-xs text-slate-500">
@@ -3525,11 +4373,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
               )}
 
               <div className="grid grid-cols-2 gap-4">
-                  <ImageInput 
-                    label="Image Principale"
+                  <ImageInput
+                    label={newListingIsPackage ? 'Image Principale (optionnelle)' : 'Image Principale'}
                     value={newListingImageUrl}
                     onChange={setNewListingImageUrl}
-                    placeholder="https://..."
+                    placeholder={newListingIsPackage ? 'Optionnel: mosaïque auto si vide' : 'https://...'}
                   />
                   <ImageInput 
                     label="Logo Spécifique (Optionnel)"
@@ -3796,7 +4644,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                               {newListingMetaTitle || newListingTitle || 'Titre du produit sur Google'}
                           </div>
                           <div className="text-[#006621] text-sm truncate mb-1">
-                              tunidex.com › products › {newListingTitle.toLowerCase().replace(/\s+/g, '-')}
+                              tunibots.com › products › {newListingTitle.toLowerCase().replace(/\s+/g, '-')}
                           </div>
                           <div className="text-[#545454] text-sm line-clamp-2">
                               {newListingMetaDesc || richTextToPlainText(generatedDescription) || 'La description de votre produit apparaîtra ici dans les résultats de recherche Google...'}
@@ -3938,153 +4786,293 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
             </div>
         )}
         {activeTab === 'orders' && (
+          (() => {
+            const isDeliveredStatus = (status: OrderStatus) => [OrderStatus.DELIVERED, OrderStatus.COMPLETED].includes(status);
+            const isActiveStatus = (status: OrderStatus) => ![OrderStatus.DELIVERED, OrderStatus.COMPLETED, OrderStatus.CANCELLED].includes(status);
+            const normalizedSearch = orderSearch.trim().toLowerCase();
+            const filteredOrders = orders
+              .filter((order) => orderFilter === 'all' ? true : order.status === orderFilter)
+              .filter((order) => {
+                if (!normalizedSearch) return true;
+                return [
+                  order.orderNumber,
+                  order.invoice?.invoiceNumber,
+                  order.buyerDisplayName,
+                  order.customerFirstName,
+                  order.customerLastName,
+                  order.customerEmail,
+                  order.customerPhone,
+                  order.paymentMethod,
+                  ...order.items.map((item) => item.titleSnapshot)
+                ].filter(Boolean).join(' ').toLowerCase().includes(normalizedSearch);
+              })
+              .sort((a, b) => {
+                if (orderSort === 'oldest') return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+                if (orderSort === 'amount-desc') return b.amount - a.amount;
+                if (orderSort === 'amount-asc') return a.amount - b.amount;
+                return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+              });
+            const activeOrders = orders.filter((order) => isActiveStatus(order.status));
+            const deliveredOrders = orders.filter((order) => isDeliveredStatus(order.status));
+            const cancelledOrders = orders.filter((order) => order.status === OrderStatus.CANCELLED);
+            const revenue = orders.filter((order) => order.status !== OrderStatus.CANCELLED).reduce((sum, order) => sum + order.amount, 0);
+            const pendingEmail = orders.filter((order) => order.emailStatus === 'FAILED' || order.emailStatus === 'PENDING').length;
+            const paymentLabels: Record<string, string> = { whatsapp: 'WhatsApp', edinar: 'EDINAR', flouci: 'Flouci', click2pay: 'Click2Pay', carte: 'Carte' };
+
+            return (
              <div className="space-y-6">
-                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-                     <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                         <div>
-                             <h2 className="text-2xl font-black text-slate-900">Traçabilité des Commandes</h2>
-                             <p className="text-sm text-slate-500 mt-1">Toutes les commandes sont visibles, même au premier step, avec leur progression complète.</p>
-                         </div>
-                         <div className="flex flex-wrap gap-2">
-                            <button onClick={() => setOrderFilter('all')} className={`px-4 py-2 rounded-xl text-xs font-bold transition ${orderFilter === 'all' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>Toutes</button>
-                            {Object.values(OrderStatus).map((status) => (
-                              <button key={status} onClick={() => setOrderFilter(status)} className={`px-4 py-2 rounded-xl text-xs font-bold transition ${orderFilter === status ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-                                {ORDER_STATUS_LABELS[status]}
-                              </button>
-                            ))}
-                         </div>
+                 <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-950 text-white shadow-xl">
+                   <div className="grid gap-6 p-6 lg:grid-cols-[1fr_360px]">
+                     <div>
+                       <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-slate-200">
+                         <LucideIcons.Briefcase size={14} />
+                         Command center
+                       </div>
+                       <h2 className="mt-4 text-3xl font-black">Dashboard commandes</h2>
+                       <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
+                         Vue CRM pour traiter les commandes, suivre les clients, contrôler les factures et prioriser les actions support.
+                       </p>
                      </div>
+                     <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                       <div className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">File de travail</div>
+                       <div className="mt-3 grid grid-cols-2 gap-3">
+                         <div>
+                           <div className="text-3xl font-black">{activeOrders.length}</div>
+                           <div className="text-xs text-slate-400">à traiter</div>
+                         </div>
+                         <div>
+                           <div className="text-3xl font-black">{pendingEmail}</div>
+                           <div className="text-xs text-slate-400">emails à vérifier</div>
+                         </div>
+                       </div>
+                     </div>
+                   </div>
                  </div>
-                 <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                    {[['Total', orders.length], ['Enregistrées', orders.filter(o => o.status === OrderStatus.REGISTERED).length], ['Paiement en attente', orders.filter(o => o.status === OrderStatus.PENDING_PAYMENT).length], ['Paiement reçu', orders.filter(o => o.status === OrderStatus.PAYMENT_RECEIVED).length], ['Terminées', orders.filter(o => o.status === OrderStatus.COMPLETED).length]].map(([label, value]) => (
-                      <div key={label} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+
+                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+                    {[
+                      ['Total commandes', orders.length, 'Toutes les commandes'],
+                      ['En cours', activeOrders.length, 'À traiter maintenant'],
+                      ['Livrées', deliveredOrders.length, 'Terminées'],
+                      ['Annulées', cancelledOrders.length, 'Stoppées'],
+                      ['CA commandes', `${revenue.toFixed(2)} TND`, 'Hors annulation']
+                    ].map(([label, value, hint]) => (
+                      <div key={label} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                         <div className="text-xs font-bold uppercase tracking-widest text-slate-400">{label}</div>
-                        <div className="mt-2 text-3xl font-black text-slate-900">{value}</div>
+                        <div className="mt-2 text-2xl font-black text-slate-900">{value}</div>
+                        <div className="mt-1 text-xs text-slate-500">{hint}</div>
                       </div>
                     ))}
                  </div>
-                 <div className="space-y-4">
-                    {orders
-                      .filter((order) => orderFilter === 'all' ? true : order.status === orderFilter)
-                      .map((o) => {
+
+                 <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                   <div className="grid gap-4 xl:grid-cols-[1fr_auto_auto] xl:items-center">
+                     <div className="relative">
+                       <LucideIcons.Search className="absolute left-4 top-3.5 text-slate-400" size={18} />
+                       <input
+                         value={orderSearch}
+                         onChange={(e) => setOrderSearch(e.target.value)}
+                         placeholder="Rechercher commande, client, téléphone, email, facture, produit..."
+                         className="h-12 w-full rounded-xl border border-slate-200 bg-slate-50 pl-11 pr-4 text-sm font-medium outline-none focus:border-indigo-500"
+                       />
+                     </div>
+                     <select value={orderSort} onChange={(e) => setOrderSort(e.target.value as typeof orderSort)} className="h-12 rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-700 outline-none focus:border-indigo-500">
+                       <option value="newest">Plus récentes</option>
+                       <option value="oldest">Plus anciennes</option>
+                       <option value="amount-desc">Montant décroissant</option>
+                       <option value="amount-asc">Montant croissant</option>
+                     </select>
+                     <div className="flex flex-wrap gap-2">
+                       {[
+                         ['all', 'Toutes'],
+                         [OrderStatus.IN_PROGRESS, 'En cours'],
+                         [OrderStatus.DELIVERED, 'Livrées'],
+                         [OrderStatus.CANCELLED, 'Annulées']
+                       ].map(([status, label]) => (
+                         <button key={status} onClick={() => setOrderFilter(status as 'all' | OrderStatus)} className={`h-10 rounded-xl px-4 text-xs font-black transition ${orderFilter === status ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                           {label}
+                         </button>
+                       ))}
+                     </div>
+                   </div>
+                 </div>
+
+                 <div className="grid gap-4 xl:grid-cols-[1fr_320px]">
+                   <div className="space-y-4">
+                    {filteredOrders.map((o) => {
                         const currentStepIndex = getOrderStepIndex(o.status);
                         const deliveredItems = o.items.filter((item) => item.deliveredContent);
+                        const isExpanded = expandedOrderId === o.id;
+                        const customerName = o.buyerDisplayName || [o.customerFirstName, o.customerLastName].filter(Boolean).join(' ') || o.buyer?.username || 'Client';
                         return (
-                          <div key={o.id} className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-                            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-                              <div className="space-y-4 flex-1">
-                                <div className="flex flex-wrap items-center gap-3">
-                                  <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-indigo-600">{o.orderNumber}</span>
-                                  <span className={`rounded-full px-3 py-1 text-[11px] font-bold uppercase ${getOrderStatusClasses(o.status)}`}>{ORDER_STATUS_LABELS[o.status]}</span>
-                                  <span className="text-xs text-slate-400">Créée le {new Date(o.createdAt).toLocaleString('fr-FR')}</span>
-                                  <span className="text-xs text-slate-400">Dernière mise à jour {new Date(o.updatedAt).toLocaleString('fr-FR')}</span>
+                          <div key={o.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:border-slate-300 hover:shadow-md">
+                            <div className="grid gap-4 p-5 lg:grid-cols-[1fr_180px_190px] lg:items-center">
+                              <div className="min-w-0">
+                                <div className="mb-3 flex flex-wrap items-center gap-2">
+                                  <span className="rounded-full bg-indigo-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-indigo-700">{o.orderNumber}</span>
+                                  <span className={`rounded-full px-3 py-1 text-[11px] font-black uppercase ${getOrderStatusClasses(o.status)}`}>{ORDER_STATUS_LABELS[o.status]}</span>
+                                  <span className={`rounded-full px-3 py-1 text-[11px] font-black uppercase ${o.emailStatus === 'SENT' ? 'bg-emerald-50 text-emerald-700' : o.emailStatus === 'FAILED' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>
+                                    Email {o.emailStatus || 'PENDING'}
+                                  </span>
                                 </div>
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                  <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
-                                    <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Client</div>
-                                    <div className="font-bold text-slate-900">{o.buyerDisplayName || o.buyer?.username || 'Client'}</div>
-                                    <div className="text-sm text-slate-500 break-all">{o.customerEmail || o.buyer?.email || 'Email indisponible'}</div>
-                                    <div className="text-sm text-slate-500">{o.customerPhone || 'Téléphone indisponible'}</div>
+                                <div className="flex flex-col gap-3 md:flex-row md:items-start">
+                                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-100 font-black text-slate-700">
+                                    {customerName.charAt(0).toUpperCase()}
                                   </div>
-                                  <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
-                                    <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Commande</div>
-                                    <div className="font-bold text-slate-900">{o.items.length} article{o.items.length > 1 ? 's' : ''}</div>
-                                    <div className="text-sm text-slate-500">{o.items.map(item => item.titleSnapshot).join(', ')}</div>
-                                    {o.invoice?.invoiceNumber && <div className="text-xs text-slate-400 mt-2">Facture: {o.invoice.invoiceNumber}</div>}
-                                  </div>
-                                  <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
-                                    <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Montant</div>
-                                    <div className="font-black text-slate-900 text-2xl">{o.amount.toFixed(2)} TND</div>
-                                  </div>
-                                </div>
-                                <div className="rounded-2xl border border-slate-100 p-4">
-                                  <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-4">Timeline de suivi</div>
-                                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                                    {ORDER_STATUS_STEPS.map((step, index) => {
-                                      const isDone = currentStepIndex >= index;
-                                      const isCurrent = o.status === step.status;
-                                      const isCancelled = o.status === OrderStatus.CANCELLED;
-                                      return (
-                                        <div key={step.status} className={`rounded-2xl border p-4 ${isCancelled ? 'border-red-200 bg-red-50' : isCurrent ? 'border-indigo-200 bg-indigo-50' : isDone ? 'border-green-200 bg-green-50' : 'border-slate-200 bg-slate-50'}`}>
-                                          <div className={`mb-2 flex h-8 w-8 items-center justify-center rounded-full text-xs font-black ${isCancelled ? 'bg-red-600 text-white' : isCurrent ? 'bg-indigo-600 text-white' : isDone ? 'bg-green-600 text-white' : 'bg-slate-300 text-slate-700'}`}>
-                                            {index + 1}
-                                          </div>
-                                          <div className="font-bold text-slate-900 text-sm">{step.label}</div>
-                                          <div className="mt-1 text-xs text-slate-500">{step.description}</div>
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                  {o.status === OrderStatus.CANCELLED && (
-                                    <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
-                                      Cette commande a été annulée. Les étapes suivantes sont stoppées.
+                                  <div className="min-w-0">
+                                    <div className="font-black text-slate-900">{customerName}</div>
+                                    <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-500">
+                                      <span className="break-all">{o.customerEmail || o.buyer?.email || 'Email indisponible'}</span>
+                                      <span>{o.customerPhone || 'Téléphone indisponible'}</span>
                                     </div>
-                                  )}
-                                </div>
-                                <div className="rounded-2xl border border-slate-100 p-4">
-                                  <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-3">Contenu livré / accès</div>
-                                  {deliveredItems.length > 0 ? (
-                                    <div className="space-y-3">
-                                      {deliveredItems.map((item) => (
-                                        <div key={item.id} className="rounded-xl bg-slate-50 border border-slate-100 p-3">
-                                          <div className="text-xs font-bold text-slate-700 mb-2">{item.titleSnapshot}</div>
-                                          <div className="font-mono text-sm text-slate-900 break-all">{item.deliveredContent}</div>
-                                        </div>
-                                      ))}
+                                    <div className="mt-2 text-sm text-slate-600 line-clamp-1">
+                                      {o.items.map((item) => item.titleSnapshot).join(', ')}
                                     </div>
-                                  ) : (
-                                    <div className="text-sm text-slate-400 italic">Aucun contenu livré pour le moment.</div>
-                                  )}
+                                  </div>
                                 </div>
                               </div>
-                              <div className="w-full lg:w-[220px] space-y-3">
-                                <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Mettre à jour le statut</div>
-                                {o.status === OrderStatus.REGISTERED && (
-                                  <button
-                                    type="button"
-                                    onClick={() => onUpdateStatus(o.id, OrderStatus.PENDING_PAYMENT)}
-                                    className="w-full rounded-xl bg-slate-800 px-4 py-3 text-xs font-bold uppercase text-white hover:bg-black"
-                                  >
-                                    Passer en attente de paiement
+                              <div className="rounded-2xl bg-slate-50 p-4">
+                                <div className="text-xs font-black uppercase tracking-widest text-slate-400">Paiement</div>
+                                <div className="mt-2 font-black text-slate-900">{paymentLabels[(o.paymentMethod || '').toLowerCase()] || o.paymentMethod || 'À confirmer'}</div>
+                                <div className="mt-1 text-xs text-slate-500">{o.invoice?.invoiceNumber ? `Facture ${o.invoice.invoiceNumber}` : 'Facture non liée'}</div>
+                              </div>
+                              <div className="space-y-3">
+                                <div className="text-right">
+                                  <div className="text-2xl font-black text-slate-900">{o.amount.toFixed(2)} TND</div>
+                                  <div className="text-xs text-slate-400">{new Date(o.createdAt).toLocaleString('fr-FR')}</div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <button type="button" onClick={() => setExpandedOrderId(isExpanded ? null : o.id)} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">
+                                    {isExpanded ? 'Fermer' : 'Détails'}
                                   </button>
-                                )}
-                                {o.status === OrderStatus.PENDING_PAYMENT && (
-                                  <button
-                                    type="button"
-                                    onClick={() => onUpdateStatus(o.id, OrderStatus.PAYMENT_RECEIVED)}
-                                    className="w-full rounded-xl bg-indigo-600 px-4 py-3 text-xs font-bold uppercase text-white hover:bg-indigo-700"
-                                  >
-                                    Confirmer le paiement
-                                  </button>
-                                )}
-                                {o.status === OrderStatus.PAYMENT_RECEIVED && (
-                                  <button
-                                    type="button"
-                                    onClick={() => onUpdateStatus(o.id, OrderStatus.COMPLETED)}
-                                    className="w-full rounded-xl bg-blue-600 px-4 py-3 text-xs font-bold uppercase text-white hover:bg-blue-700"
-                                  >
-                                    Marquer comme terminée
-                                  </button>
-                                )}
-                                <select
-                                  className={`w-full rounded-xl px-4 py-3 text-xs font-bold uppercase border-none focus:ring-0 cursor-pointer ${getOrderStatusClasses(o.status)}`}
-                                  value={o.status}
-                                  onChange={(e) => onUpdateStatus(o.id, e.target.value as OrderStatus)}
-                                >
-                                  {Object.values(OrderStatus).map(s => <option key={s} value={s}>{ORDER_STATUS_LABELS[s]}</option>)}
-                                </select>
+                                  {isActiveStatus(o.status) ? (
+                                    <button type="button" onClick={() => onUpdateStatus(o.id, OrderStatus.DELIVERED)} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white hover:bg-emerald-700">
+                                      Livrer
+                                    </button>
+                                  ) : (
+                                    <button type="button" onClick={() => onUpdateStatus(o.id, OrderStatus.IN_PROGRESS)} className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-black text-white hover:bg-black">
+                                      Rouvrir
+                                    </button>
+                                  )}
+                                </div>
                               </div>
                             </div>
+                            {isExpanded && (
+                              <div className="border-t border-slate-100 bg-slate-50/60 p-5">
+                                <div className="grid gap-4 lg:grid-cols-[1fr_280px]">
+                                  <div className="space-y-4">
+                                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                                      <div className="mb-4 text-xs font-black uppercase tracking-widest text-slate-400">Timeline de suivi</div>
+                                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                                        {ORDER_STATUS_STEPS.map((step, index) => {
+                                          const isDone = currentStepIndex >= index;
+                                          const isCurrent = o.status === step.status || (index === 0 && ['REGISTERED', 'PENDING_PAYMENT', 'PAYMENT_RECEIVED'].includes(o.status));
+                                          return (
+                                            <div key={step.status} className={`rounded-2xl border p-4 ${o.status === OrderStatus.CANCELLED ? 'border-red-200 bg-red-50' : isCurrent ? 'border-indigo-200 bg-indigo-50' : isDone ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-slate-50'}`}>
+                                              <div className="font-black text-slate-900">{step.label}</div>
+                                              <div className="mt-1 text-xs leading-5 text-slate-500">{step.description}</div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                                      <div className="mb-3 text-xs font-black uppercase tracking-widest text-slate-400">Produits achetés</div>
+                                      <div className="divide-y divide-slate-100">
+                                        {o.items.map((item) => (
+                                          <div key={item.id} className="flex items-center justify-between gap-4 py-3 text-sm">
+                                            <div>
+                                              <div className="font-bold text-slate-900">{item.titleSnapshot}</div>
+                                              {item.variantSnapshot && <div className="text-xs text-slate-500">{item.variantSnapshot}</div>}
+                                            </div>
+                                            <div className="text-right">
+                                              <div className="font-black text-slate-900">{(item.priceSnapshot * item.quantity).toFixed(2)} TND</div>
+                                              <div className="text-xs text-slate-500">Qté {item.quantity}</div>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                                      <div className="mb-3 text-xs font-black uppercase tracking-widest text-slate-400">Contenu livré / accès</div>
+                                      {deliveredItems.length > 0 ? (
+                                        <div className="space-y-3">
+                                          {deliveredItems.map((item) => (
+                                            <div key={item.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                                              <div className="mb-2 text-xs font-bold text-slate-700">{item.titleSnapshot}</div>
+                                              <div className="break-all font-mono text-sm text-slate-900">{item.deliveredContent}</div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <div className="text-sm italic text-slate-400">Aucun contenu livré pour le moment.</div>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <aside className="space-y-3">
+                                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                                      <div className="text-xs font-black uppercase tracking-widest text-slate-400">Actions administratives</div>
+                                      <select className={`mt-3 w-full rounded-xl px-4 py-3 text-xs font-bold uppercase border-none focus:ring-0 cursor-pointer ${getOrderStatusClasses(o.status)}`} value={o.status} onChange={(e) => onUpdateStatus(o.id, e.target.value as OrderStatus)}>
+                                        {[OrderStatus.IN_PROGRESS, OrderStatus.DELIVERED, OrderStatus.CANCELLED].map(s => <option key={s} value={s}>{ORDER_STATUS_LABELS[s]}</option>)}
+                                      </select>
+                                      <a href={`mailto:${o.customerEmail || o.buyer?.email || ''}`} className="mt-3 flex w-full items-center justify-center rounded-xl border border-slate-200 px-4 py-3 text-xs font-black text-slate-700 hover:bg-slate-50">
+                                        Email client
+                                      </a>
+                                      <button type="button" onClick={() => onResendOrderInvoiceEmail(o.id)} className="mt-3 flex w-full items-center justify-center rounded-xl bg-indigo-50 px-4 py-3 text-xs font-black text-indigo-700 hover:bg-indigo-100">
+                                        Renvoyer facture
+                                      </button>
+                                      {o.customerPhone && (
+                                        <a href={`https://wa.me/${o.customerPhone.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" className="mt-3 flex w-full items-center justify-center rounded-xl bg-emerald-50 px-4 py-3 text-xs font-black text-emerald-700 hover:bg-emerald-100">
+                                          WhatsApp client
+                                        </a>
+                                      )}
+                                    </div>
+                                    <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
+                                      <div className="text-xs font-black uppercase tracking-widest text-slate-400">Audit</div>
+                                      <div className="mt-3">Créée: {new Date(o.createdAt).toLocaleString('fr-FR')}</div>
+                                      <div className="mt-1">Mise à jour: {new Date(o.updatedAt).toLocaleString('fr-FR')}</div>
+                                      {o.emailError && <div className="mt-3 rounded-xl bg-red-50 p-3 text-xs font-semibold text-red-700">{o.emailError}</div>}
+                                    </div>
+                                  </aside>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         );
                     })}
-                    {orders.filter((order) => orderFilter === 'all' ? true : order.status === orderFilter).length === 0 && (
-                      <div className="text-center py-20 bg-white rounded-2xl border border-dashed border-slate-300 text-slate-400 italic">
-                        Aucune commande trouvée pour ce filtre.
+                    {filteredOrders.length === 0 && (
+                      <div className="rounded-2xl border border-dashed border-slate-300 bg-white py-20 text-center text-slate-400">
+                        Aucune commande trouvée pour ces critères.
                       </div>
                     )}
+                   </div>
+                   <aside className="space-y-4">
+                     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                       <div className="text-xs font-black uppercase tracking-widest text-slate-400">Priorités</div>
+                       <div className="mt-4 space-y-3">
+                         {activeOrders.slice(0, 5).map((order) => (
+                           <button key={order.id} type="button" onClick={() => setExpandedOrderId(order.id)} className="w-full rounded-xl border border-slate-100 bg-slate-50 p-3 text-left hover:border-indigo-200 hover:bg-indigo-50">
+                             <div className="text-xs font-black text-indigo-700">{order.orderNumber}</div>
+                             <div className="mt-1 truncate text-sm font-bold text-slate-900">{order.buyerDisplayName || order.customerEmail || 'Client'}</div>
+                             <div className="text-xs text-slate-500">{order.amount.toFixed(2)} TND</div>
+                           </button>
+                         ))}
+                         {activeOrders.length === 0 && <div className="text-sm text-slate-400">Aucune commande active.</div>}
+                       </div>
+                     </div>
+                     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                       <div className="text-xs font-black uppercase tracking-widest text-slate-400">Santé opérationnelle</div>
+                       <div className="mt-4 space-y-3 text-sm">
+                         <div className="flex justify-between"><span className="text-slate-500">Taux livraison</span><span className="font-black text-slate-900">{orders.length ? Math.round((deliveredOrders.length / orders.length) * 100) : 0}%</span></div>
+                         <div className="flex justify-between"><span className="text-slate-500">Panier moyen</span><span className="font-black text-slate-900">{orders.length ? (revenue / orders.length).toFixed(2) : '0.00'} TND</span></div>
+                         <div className="flex justify-between"><span className="text-slate-500">Emails échoués</span><span className="font-black text-slate-900">{orders.filter(order => order.emailStatus === 'FAILED').length}</span></div>
+                       </div>
+                     </div>
+                   </aside>
                  </div>
              </div>
+            );
+          })()
         )}
         {activeTab === 'listings' && (
              <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
@@ -4108,7 +5096,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                              {listings.map(l => (
                                  <tr key={l.id} className="hover:bg-slate-50 transition-colors">
                                      <td className="px-6 py-4 flex items-center space-x-3">
-                                         <img src={l.imageUrl} className="w-10 h-10 rounded object-cover border border-slate-100" />
+                                         <div className="h-10 w-10 overflow-hidden rounded border border-slate-100">
+                                           <ListingImage listing={l} alt="" />
+                                         </div>
                                          <div>
                                              <div className="flex items-center gap-2">
                                                <div className="font-bold text-slate-900 text-sm">{l.title}</div>

@@ -36,20 +36,50 @@ const getAuthHeaders = (): Record<string, string> => {
   return token ? { 'Authorization': `Bearer ${token}` } : {};
 };
 
+export type SeoAnalytics = {
+  totalVisits: number;
+  uniqueVisitors: number;
+  dailyVisits: Array<{ date: string; visits: number; productViews: number; categoryViews: number }>;
+  topCategories: Array<{ id: string | null; name: string; slug: string; views: number }>;
+  topProducts: Array<{ id: string | null; title: string; imageUrl: string; categoryName: string; views: number }>;
+};
+
 export const api = {
   // Auth
   login: (email: string, password: string) => fetchWithFallback(`${API_URL}/auth/login`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({email, password}) }),
-  register: (email: string, password: string, username: string) => fetchWithFallback<{ verificationRequired: boolean; email: string; message: string }>(`${API_URL}/auth/register`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({email, password, username}) }),
+  register: (data: {
+    email: string;
+    password: string;
+    username: string;
+    fullName: string;
+    address: string;
+    phone: string;
+    paymentMethod?: string;
+    whatsappNumber?: string;
+    whatsappBotId?: string;
+    whatsappOptIn?: boolean;
+  }) => fetchWithFallback<{ verificationRequired: boolean; email: string; message: string }>(`${API_URL}/auth/register`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) }),
   verifyRegistrationOtp: (email: string, otp: string) => fetchWithFallback<{ token: string; user: User }>(`${API_URL}/auth/register/verify-otp`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ email, otp }) }),
   resendRegistrationOtp: (email: string) => fetchWithFallback<{ success: boolean; message: string }>(`${API_URL}/auth/register/resend-otp`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ email }) }),
   getCurrentUser: () => fetchWithFallback<User>(`${API_URL}/auth/me`, { headers: getHeaders() }),
   
   // Profile & Subscription
-  updateProfile: (data: { username: string, email: string, avatarUrl?: string, password?: string }) => 
+  updateProfile: (data: { username: string, avatarUrl?: string, password?: string, fullName?: string, address?: string, phone?: string, paymentMethod?: string, whatsappNumber?: string }) => 
       fetchWithFallback<User>(`${API_URL}/users/profile`, { method: 'PATCH', headers: getHeaders(), body: JSON.stringify(data) }),
+  requestEmailChange: (newEmail: string) =>
+      fetchWithFallback<{ success: boolean; message: string }>(`${API_URL}/users/email-change/request`, { method: 'POST', headers: getHeaders(), body: JSON.stringify({ newEmail }) }),
+  confirmEmailChange: (newEmail: string, otp: string) =>
+      fetchWithFallback<User>(`${API_URL}/users/email-change/confirm`, { method: 'POST', headers: getHeaders(), body: JSON.stringify({ newEmail, otp }) }),
+  deleteAccount: (confirmation: string) =>
+      fetchWithFallback<{ success: boolean }>(`${API_URL}/users/me`, { method: 'DELETE', headers: getHeaders(), body: JSON.stringify({ confirmation }) }),
   sendVerificationEmail: () => fetchWithFallback(`${API_URL}/auth/verify-email`, { method: 'POST', headers: getHeaders() }),
-  updateSubscription: (data: { tier: SubscriptionTier, fullName: string, address: string, phone: string, paymentMethod: string }) => 
-      fetchWithFallback(`${API_URL}/users/subscribe`, { method: 'POST', headers: getHeaders(), body: JSON.stringify(data) }),
+  updateSubscription: (data: {
+    tier: SubscriptionTier;
+    fullName: string;
+    address: string;
+    phone: string;
+    paymentMethod: string;
+  }) => fetchWithFallback<User>(`${API_URL}/users/subscribe`, { method: 'POST', headers: getHeaders(), body: JSON.stringify(data) }),
 
   // Cart & Checkout
   getCart: () => fetchWithFallback<CartItem[]>(`${API_URL}/cart`, { headers: getHeaders() }, []),
@@ -78,6 +108,7 @@ export const api = {
   getMyOrders: () => fetchWithFallback<Order[]>(`${API_URL}/orders/my`, { headers: getHeaders() }, []),
   getAllOrders: () => fetchWithFallback<Order[]>(`${API_URL}/orders/admin`, { headers: getHeaders() }, []),
   updateOrderStatus: (orderId: string, status: OrderStatus) => fetchWithFallback(`${API_URL}/orders/${orderId}/status`, { method: 'PATCH', headers: getHeaders(), body: JSON.stringify({status}) }),
+  resendOrderInvoiceEmail: (orderId: string) => fetchWithFallback<Order>(`${API_URL}/orders/${orderId}/email/resend`, { method: 'POST', headers: getHeaders() }),
   
   // Admin Users
   getAllUsers: () => fetchWithFallback<User[]>(`${API_URL}/users`, { headers: getHeaders() }, []),
@@ -85,11 +116,18 @@ export const api = {
   updateUserBalance: (userId: string, balance: number) => fetchWithFallback(`${API_URL}/users/${userId}/balance`, { method: 'PATCH', headers: getHeaders(), body: JSON.stringify({balance}) }),
 
   // Site Config
-  getSiteConfig: () => fetchWithFallback<SiteConfig>(`${API_URL}/config`, undefined, { logoUrl: 'https://via.placeholder.com/150', siteName: 'Tunidex', logoSize: 32, heroPromoBanners: [], floatingBrandCards: [], storeSections: [] }),
+  getSiteConfig: () => fetchWithFallback<SiteConfig>(`${API_URL}/config`, undefined, { logoUrl: 'https://via.placeholder.com/150', siteName: 'TuniBots', logoSize: 32, heroPromoBanners: [], floatingBrandCards: [], storeSections: [] }),
   updateSiteConfig: (config: Partial<SiteConfig>) => fetchWithFallback<SiteConfig>(`${API_URL}/config`, { method: 'PATCH', headers: getHeaders(), body: JSON.stringify(config) }),
+  testEmailConfig: (to: string) => fetchWithFallback<{ success: boolean; message: string; messageId?: string }>(
+    `${API_URL}/admin/email/test`,
+    { method: 'POST', headers: getHeaders(), body: JSON.stringify({ to }) }
+  ),
 
   // Analytics
   getDailyStats: () => fetchWithFallback<{ dailyStats: { date: string, sales: number, orders: number }[], totalSales: number, totalOrders: number, totalUsers: number, topProducts: Listing[] }>(`${API_URL}/admin/stats`, { headers: getHeaders() }, { dailyStats: [], totalSales: 0, totalOrders: 0, totalUsers: 0, topProducts: [] }),
+  getSeoAnalytics: () => fetchWithFallback<SeoAnalytics>(`${API_URL}/admin/seo/analytics`, { headers: getHeaders() }, { totalVisits: 0, uniqueVisitors: 0, dailyVisits: [], topCategories: [], topProducts: [] }),
+  trackVisit: (data: { path: string; pageType: string; listingId?: string; categoryId?: string; userId?: string; visitorId?: string; referrer?: string }) =>
+    fetchWithFallback<{ success: boolean }>(`${API_URL}/analytics/visit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
   exportSiteData: async () => {
     const res = await fetch(`${API_URL}/admin/data/export`, { headers: getAuthHeaders() });
     if (!res.ok) throw new Error(res.statusText);

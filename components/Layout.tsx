@@ -230,6 +230,10 @@ const Layout: React.FC<LayoutProps> = ({
               <h4 className="mb-4 text-sm font-black uppercase tracking-widest text-white">Navigation</h4>
               <div className="space-y-3 text-sm text-slate-300">
                 <button onClick={() => navigateTo('home')} className="block hover:text-white">Accueil</button>
+                <button onClick={() => navigateTo('about')} className="block hover:text-white">À propos</button>
+                <button onClick={() => navigateTo('contact')} className="block hover:text-white">Contact</button>
+                <button onClick={() => navigateTo('privacy-policy')} className="block hover:text-white">Privacy Policy</button>
+                <button onClick={() => navigateTo('terms')} className="block hover:text-white">Terms</button>
                 <button onClick={() => navigateTo('cart')} className="block hover:text-white">Panier</button>
                 <button onClick={() => navigateTo('login')} className="block hover:text-white">Connexion</button>
                 <button onClick={() => navigateTo('register')} className="block hover:text-white">{siteConfig.headerCtaLabel || "S'inscrire"}</button>
@@ -251,6 +255,10 @@ const Layout: React.FC<LayoutProps> = ({
             <div>
               <h4 className="mb-4 text-sm font-black uppercase tracking-widest text-white">Contact</h4>
               <div className="space-y-3 text-sm text-slate-300">
+                <button onClick={() => navigateTo('contact')} className="flex items-center gap-2 hover:text-white">
+                  <LucideIcons.Headphones size={16} className="theme-text-accent" />
+                  Centre de contact
+                </button>
                 {siteConfig.footerEmail && (
                   <a href={`mailto:${siteConfig.footerEmail}`} className="flex items-center gap-2 hover:text-white">
                     <LucideIcons.Mail size={16} className="theme-text-accent" />

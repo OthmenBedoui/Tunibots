@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { Prisma } from '@prisma/client';
 import { promises as fs } from 'fs';
 import path from 'path';
+import { DEFAULT_EMAIL_TEMPLATES } from './email.js';
 
 const SITE_CONFIG_KEY = 'site';
 const legacySiteConfigPath = path.join(process.cwd(), 'server', 'data', 'site-config.json');
@@ -13,7 +14,7 @@ const DEFAULT_AGENT_PASSWORD = process.env.DEFAULT_AGENT_PASSWORD || DEFAULT_ADM
 
 const defaultSiteConfig = {
   logoUrl: '',
-  siteName: 'Tunidex',
+  siteName: 'TuniBots',
   logoSize: 32,
   faviconUrl: '',
   primaryColor: '',
@@ -39,16 +40,29 @@ const defaultSiteConfig = {
   accentHoverColor: '#4338ca',
   accentSoftColor: '#e0e7ff',
   accentTextColor: '#312e81',
+  fontFamily: '"Albeit Grotesk Caps", "Albeit Grotesk", "Arial Narrow", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  customFonts: [],
   headerAnnouncement: 'Bienvenue sur la première plateforme digitale en Tunisie !',
   headerSearchPlaceholder: 'Rechercher jeux, items, comptes...',
   headerCtaLabel: "S'inscrire",
   footerTagline: 'Marketplace digitale premium',
   footerDescription: 'La destination premium pour vos comptes, licences, abonnements, outils IA et services digitaux en Tunisie.',
-  footerEmail: 'support@tunidex.tn',
+  footerEmail: 'support@tunibots.tn',
   footerPhone: '+216 00 000 000',
   footerWhatsapp: '+216 00 000 000',
   footerAddress: 'Tunis, Tunisie',
   footerCopyright: 'Tous droits réservés.',
+  seoTitle: 'TuniBots | Marketplace digitale en Tunisie',
+  seoDescription: 'Achetez des produits digitaux, comptes, licences, abonnements et services numériques en Tunisie avec livraison rapide et support local.',
+  seoKeywords: 'marketplace digitale tunisie, comptes gaming, abonnements, licences, services digitaux, TuniBots',
+  seoCanonicalUrl: '',
+  seoOgImageUrl: '',
+  seoRobots: 'index,follow',
+  seoSitemapEnabled: true,
+  seoOrganizationName: 'TuniBots',
+  seoGoogleAnalyticsId: '',
+  seoGoogleAdsConversionId: '',
+  seoFacebookPixelId: '',
   smtpMailerName: '',
   smtpHost: '',
   smtpDriver: 'smtp',
@@ -57,6 +71,17 @@ const defaultSiteConfig = {
   smtpEmailId: '',
   smtpEncryption: 'tls',
   smtpPassword: '',
+  emailTemplates: DEFAULT_EMAIL_TEMPLATES,
+  adminNotificationsEnabled: true,
+  adminNotificationSound: true,
+  adminNotificationPollSeconds: 15,
+  whatsappNotificationsEnabled: false,
+  whatsappNotificationWebhookUrl: '',
+  telegramNotificationsEnabled: false,
+  telegramBotToken: '',
+  telegramChatId: '',
+  messengerNotificationsEnabled: false,
+  messengerNotificationWebhookUrl: '',
   click2payEnabled: false,
   click2payMerchantId: '',
   click2payApiKey: ''
@@ -110,11 +135,18 @@ export const seedDatabase = async () => {
       avatarUrl: string;
       password: string;
     }) => {
-      const existing = await prisma.user.findUnique({ where: { email } });
+      const existing = await prisma.user.findFirst({
+        where: {
+          OR: [
+            { email },
+            { username }
+          ]
+        }
+      });
+      const hashedPwd = await bcrypt.hash(password, 10);
 
       if (!existing) {
         console.log(`🛠️ Création ${role} (${email})...`);
-        const hashedPwd = await bcrypt.hash(password, 10);
         await prisma.user.create({
           data: {
             email,
@@ -133,9 +165,11 @@ export const seedDatabase = async () => {
 
       // Staff accounts must remain usable even when SMTP/OTP is not configured yet.
       await prisma.user.update({
-        where: { email },
+        where: { id: existing.id },
         data: {
+          email,
           username,
+          password: hashedPwd,
           role,
           subscriptionTier,
           avatarUrl,

@@ -6,6 +6,7 @@ import ProductPriceCard from '../components/ProductPriceCard';
 import ProductVariations from '../components/ProductVariations';
 import ProductDescriptionCard from '../components/ProductDescriptionCard';
 import ProductSystemRequirements from '../components/ProductSystemRequirements';
+import { ListingImage } from '../components/ListingImage';
 import { getListingFinalPrice } from '../utils/pricing';
 
 interface ProductPageProps {
@@ -59,7 +60,7 @@ const ProductPage: React.FC<ProductPageProps> = ({ product, categories, selected
           <div className="min-w-0">
             <div className="grid grid-cols-1 gap-5 md:grid-cols-[188px_minmax(0,1fr)]">
               <div className="relative h-[280px] w-full overflow-hidden rounded-[10px] bg-[var(--surface-card)] shadow-sm md:w-[188px]">
-                <img src={product.imageUrl} alt={product.title} className="h-full w-full object-cover" />
+                <ListingImage listing={product} />
                 <button type="button" className="absolute bottom-3 left-1/2 inline-flex -translate-x-1/2 items-center gap-2 rounded-xl bg-white px-4 py-2 text-xs font-black text-slate-900 shadow-lg">
                   <Eye size={15} /> View
                 </button>

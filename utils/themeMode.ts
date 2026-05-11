@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 
 export type ThemeMode = 'light' | 'dark';
 
-const STORAGE_KEY = 'tunidex-theme';
+const STORAGE_KEY = 'tunibots-theme';
 
 export const getInitialThemeMode = (): ThemeMode => {
   if (typeof window === 'undefined') return 'light';

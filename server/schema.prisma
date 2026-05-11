@@ -26,6 +26,12 @@ model User {
   address          String?
   phone            String?
   paymentMethod    String?
+  whatsappNumber   String?
+  whatsappBotId    String?
+  whatsappOptIn    Boolean  @default(false)
+  whatsappWelcomeStatus String @default("NOT_REQUESTED")
+  whatsappWelcomeSentAt DateTime?
+  whatsappWelcomeError String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
   orders           Order[]
@@ -45,6 +51,26 @@ model SiteConfig {
   data      Json
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model SiteVisit {
+  id         String   @id @default(uuid())
+  path       String
+  pageType   String
+  listingId  String?
+  categoryId String?
+  userId     String?
+  visitorId  String?
+  referrer   String?
+  userAgent  String?
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([pageType])
+  @@index([listingId])
+  @@index([categoryId])
+  @@index([visitorId])
 }
 
 model Category {
@@ -89,6 +115,7 @@ model Listing {
   subCategory       SubCategory? @relation(fields: [subCategoryId], references: [id])
   logoUrl           String?
   imageUrl          String
+  cardTemplate      String       @default("default")
   gallery           String       @default("[]") // JSON string array
   game              String?
   platform          String?

@@ -2,6 +2,7 @@ import React from 'react';
 import { Bot, Sparkles, Code, BrainCircuit, Star, Zap, Search, Filter, LayoutGrid } from 'lucide-react';
 import { Listing } from '../types';
 import PriceDisplay from '../components/PriceDisplay';
+import { ListingImage } from '../components/ListingImage';
 import { richTextToPlainText } from '../utils/richText';
 
 interface AiToolsProps {
@@ -166,7 +167,9 @@ const AiTools: React.FC<AiToolsProps> = ({ listings, onViewProduct }) => {
             {filteredAiListings.map((listing) => (
               <div key={listing.id} className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden hover:shadow-xl hover:border-indigo-200 transition-all duration-300 flex flex-col h-full group">
                 <div className="relative h-56 overflow-hidden bg-slate-100">
-                  <img src={listing.imageUrl} alt={listing.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                  <div className="h-full w-full transition-transform duration-500 group-hover:scale-105">
+                    <ListingImage listing={listing} />
+                  </div>
                   <div className="absolute top-4 left-4 bg-slate-900/90 backdrop-blur-md text-white text-xs px-3 py-1 rounded-full font-bold flex items-center">
                     <Zap size={12} className="mr-1 text-yellow-400" />
                     Livraison Instantanée

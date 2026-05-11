@@ -1,9 +1,10 @@
 import React from 'react';
 import { Listing, SubCategory } from '../types';
-import { ArrowLeft, Filter, Search, LayoutGrid, Zap } from 'lucide-react';
+import { ArrowLeft, Filter, Search, LayoutGrid, Zap, X } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import { getListingDiscountLabel, getListingFinalPrice, hasListingDiscount } from '../utils/pricing';
 import PriceDisplay from '../components/PriceDisplay';
+import { ListingImage } from '../components/ListingImage';
 
 interface CategoryPageProps {
   categoryId: string; 
@@ -61,12 +62,18 @@ const CategoryPage: React.FC<CategoryPageProps> = ({
   const [searchTerm, setSearchTerm] = React.useState('');
   const [selectedSubCategory, setSelectedSubCategory] = React.useState<string | null>(null);
   const [selectedBrand, setSelectedBrand] = React.useState<string | null>(null);
+  const [showSubCategoryMenu, setShowSubCategoryMenu] = React.useState(false);
 
   React.useEffect(() => {
     setSelectedBrand(null);
   }, [selectedSubCategory, categoryId]);
 
   const selectedSubCategoryLabel = subCategories?.find((sub) => sub.id === selectedSubCategory)?.name;
+  const getSubCategoryProductCount = (subCategoryId: string | null) =>
+    subCategoryId
+      ? categoryListings.filter((listing) => matchesSelectedSubCategory(listing, subCategoryId)).length
+      : categoryListings.length;
+  const visibleSubCategories = (subCategories || []).slice(0, 7);
   const filteredListings = categoryListings.filter(l => {
     const brand = getListingBrand(l);
     const searchMatch =
@@ -144,47 +151,112 @@ const CategoryPage: React.FC<CategoryPageProps> = ({
 
       {/* Sub Category Icon Rail */}
       {subCategories && subCategories.length > 0 && (
-         <div className="overflow-x-auto no-scrollbar">
-            <div className="flex w-max min-w-full items-stretch gap-3 pb-1">
-              <button
-                  type="button"
-                  onClick={() => setSelectedSubCategory(null)}
-                  className={`flex h-20 min-w-[132px] items-center gap-3 rounded-xl border bg-white px-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md ${
-                    selectedSubCategory === null ? 'border-slate-900 bg-slate-50 ring-2 ring-slate-900/10' : 'border-slate-100'
-                  }`}
-              >
-                  <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${
-                    selectedSubCategory === null ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700'
-                  }`}>
-                      <LayoutGrid size={21} />
-                  </span>
-                  <span className="min-w-0">
-                      <span className="block text-sm font-black leading-tight text-slate-900">Tout voir</span>
-                      <span className="mt-0.5 block text-[11px] font-semibold text-slate-400">{categoryListings.length} produits</span>
-                  </span>
-              </button>
+         <div className="relative">
+            <div className="overflow-x-auto no-scrollbar">
+              <div className="flex w-max min-w-full items-start gap-5 pb-2">
+                <button
+                    type="button"
+                    onClick={() => setShowSubCategoryMenu(true)}
+                    className="group flex w-[92px] shrink-0 flex-col items-center text-center"
+                >
+                    <span className={`relative flex h-[76px] w-[76px] items-center justify-center overflow-hidden rounded-[22px] border shadow-sm transition-all group-hover:-translate-y-1 group-hover:shadow-xl ${
+                      selectedSubCategory === null ? 'border-slate-950 bg-slate-950 text-white ring-4 ring-slate-950/10' : 'border-slate-200 bg-white text-slate-700'
+                    }`}>
+                        <span className="absolute inset-0 bg-gradient-to-br from-white/20 via-transparent to-black/10" />
+                        <LayoutGrid size={30} className="relative" />
+                    </span>
+                    <span className="mt-2 line-clamp-2 text-xs font-black leading-tight text-slate-900">Voir tout</span>
+                    <span className="mt-1 text-[10px] font-bold text-slate-400">{categoryListings.length}</span>
+                </button>
 
-            {subCategories.map((sub) => (
-               <button
-                 type="button"
-                 key={sub.id}
-                 onClick={() => setSelectedSubCategory(sub.id)}
-                 className={`flex h-20 min-w-[132px] max-w-[190px] items-center gap-3 rounded-xl border bg-white px-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md ${
-                  selectedSubCategory === sub.id ? 'border-indigo-600 bg-indigo-50 ring-2 ring-indigo-600/10' : 'border-slate-100'
-                 }`}
-               >
-                  <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${
-                    selectedSubCategory === sub.id ? 'bg-indigo-600 text-white' : 'bg-indigo-50 text-indigo-600'
-                  }`}>
-                    <DynamicIcon name={sub.icon || 'Package'} className="h-5 w-5" />
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-black leading-tight text-slate-900">{sub.name}</span>
-                    <span className="mt-0.5 block truncate text-[11px] font-semibold text-slate-400">{sub.description || 'Collection'}</span>
-                  </span>
-               </button>
-            ))}
+              {visibleSubCategories.map((sub) => (
+                 <button
+                   type="button"
+                   key={sub.id}
+                   onClick={() => {
+                     setSelectedSubCategory(sub.id);
+                     setShowSubCategoryMenu(false);
+                   }}
+                   className="group flex w-[92px] shrink-0 flex-col items-center text-center"
+                 >
+                    <span className={`relative flex h-[76px] w-[76px] items-center justify-center overflow-hidden rounded-[22px] border shadow-sm transition-all group-hover:-translate-y-1 group-hover:shadow-xl ${
+                      selectedSubCategory === sub.id ? 'border-indigo-600 bg-indigo-600 text-white ring-4 ring-indigo-600/10' : 'border-slate-200 bg-white text-indigo-600'
+                    }`}>
+                      {isImageIconValue(sub.icon) ? (
+                        <img src={sub.icon} alt="" className="absolute inset-0 h-full w-full object-cover" referrerPolicy="no-referrer" />
+                      ) : (
+                        <>
+                          <span className="absolute inset-0 bg-gradient-to-br from-indigo-50 via-white to-cyan-50" />
+                          <span className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-indigo-100/80 to-transparent" />
+                          <DynamicIcon name={sub.icon || 'Package'} className="relative h-8 w-8" />
+                        </>
+                      )}
+                      <span className="absolute inset-0 bg-gradient-to-b from-white/15 via-transparent to-black/15" />
+                    </span>
+                    <span className="mt-2 line-clamp-2 text-xs font-black leading-tight text-slate-900">{sub.name}</span>
+                    <span className="mt-1 text-[10px] font-bold text-slate-400">{getSubCategoryProductCount(sub.id)}</span>
+                 </button>
+              ))}
+
+              </div>
             </div>
+
+            {showSubCategoryMenu && (
+              <div className="fixed inset-0 z-50 flex items-end bg-slate-950/45 p-3 backdrop-blur-sm md:items-center md:justify-center">
+                <div className="max-h-[82vh] w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl md:max-w-3xl">
+                  <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+                    <div>
+                      <div className="text-xs font-black uppercase tracking-[0.18em] text-indigo-600">Sous-catégories</div>
+                      <h3 className="mt-1 text-xl font-black text-slate-900">{title}</h3>
+                    </div>
+                    <button type="button" onClick={() => setShowSubCategoryMenu(false)} className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200">
+                      <X size={18} />
+                    </button>
+                  </div>
+                  <div className="max-h-[62vh] overflow-y-auto p-5">
+                    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedSubCategory(null);
+                          setShowSubCategoryMenu(false);
+                        }}
+                        className={`rounded-2xl border p-4 text-left transition hover:-translate-y-0.5 hover:shadow-lg ${selectedSubCategory === null ? 'border-slate-950 bg-slate-950 text-white' : 'border-slate-200 bg-slate-50 text-slate-900'}`}
+                      >
+                        <div className={`mb-3 flex h-14 w-14 items-center justify-center rounded-2xl ${selectedSubCategory === null ? 'bg-white/10 text-white' : 'bg-white text-slate-800'}`}>
+                          <LayoutGrid size={26} />
+                        </div>
+                        <div className="font-black">Tout voir</div>
+                        <div className={`mt-1 text-xs font-bold ${selectedSubCategory === null ? 'text-white/60' : 'text-slate-400'}`}>{categoryListings.length} produits</div>
+                      </button>
+
+                      {subCategories.map((sub) => (
+                        <button
+                          key={sub.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedSubCategory(sub.id);
+                            setShowSubCategoryMenu(false);
+                          }}
+                          className={`rounded-2xl border p-4 text-left transition hover:-translate-y-0.5 hover:shadow-lg ${selectedSubCategory === sub.id ? 'border-indigo-600 bg-indigo-50 ring-2 ring-indigo-600/10' : 'border-slate-200 bg-slate-50'}`}
+                        >
+                          <div className="relative mb-3 flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl bg-white text-indigo-600 shadow-sm">
+                            {isImageIconValue(sub.icon) ? (
+                              <img src={sub.icon} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                            ) : (
+                              <DynamicIcon name={sub.icon || 'Package'} className="h-7 w-7" />
+                            )}
+                          </div>
+                          <div className="line-clamp-2 font-black text-slate-900">{sub.name}</div>
+                          <div className="mt-1 text-xs font-bold text-slate-400">{getSubCategoryProductCount(sub.id)} produits</div>
+                          {sub.description && <div className="mt-2 line-clamp-2 text-xs leading-5 text-slate-500">{sub.description}</div>}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
          </div>
       )}
 
@@ -211,7 +283,9 @@ const CategoryPage: React.FC<CategoryPageProps> = ({
           {filteredListings.map((listing) => (
             <div key={listing.id} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden hover:shadow-xl hover:-translate-y-1 transition-all duration-300 flex flex-col group">
               <div className="relative h-48 overflow-hidden bg-slate-100">
-                <img src={listing.imageUrl} alt={listing.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                <div className="h-full w-full transition-transform duration-500 group-hover:scale-105">
+                  <ListingImage listing={listing} />
+                </div>
                 <div className="absolute top-3 left-3 bg-slate-900/80 backdrop-blur-sm text-white text-[10px] px-2 py-1 rounded-md font-bold uppercase">{getListingBrand(listing)}</div>
                 {listing.isInstant && (
                   <div className="absolute top-3 right-3 bg-green-500/90 backdrop-blur-sm text-white text-[10px] px-2 py-1 rounded-md font-bold flex items-center shadow-sm">
@@ -247,7 +321,9 @@ const CategoryPage: React.FC<CategoryPageProps> = ({
               className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden hover:shadow-xl hover:-translate-y-1 transition-all duration-300 flex flex-col group cursor-pointer"
             >
               <div className="relative h-52 overflow-hidden bg-slate-100">
-                <img src={group.cover.imageUrl} alt={group.brand} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                <div className="h-full w-full transition-transform duration-500 group-hover:scale-105">
+                  <ListingImage listing={group.cover} alt={group.brand} />
+                </div>
                 <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-900/20 to-transparent"></div>
                 <div className="absolute top-3 left-3 bg-slate-900/85 backdrop-blur-sm text-white text-[10px] px-2 py-1 rounded-md font-bold uppercase tracking-wider">
                   {group.offerCount} offres
@@ -287,7 +363,9 @@ const CategoryPage: React.FC<CategoryPageProps> = ({
             {brandListings.map((listing) => (
               <div key={listing.id} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden hover:shadow-xl hover:-translate-y-1 transition-all duration-300 flex flex-col group">
                 <div className="relative h-48 overflow-hidden bg-slate-100">
-                  <img src={listing.imageUrl} alt={listing.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                  <div className="h-full w-full transition-transform duration-500 group-hover:scale-105">
+                    <ListingImage listing={listing} />
+                  </div>
                   <div className="absolute top-3 left-3 bg-slate-900/80 backdrop-blur-sm text-white text-[10px] px-2 py-1 rounded-md font-bold uppercase">{getListingBrand(listing)}</div>
                   {listing.isInstant && (
                     <div className="absolute top-3 right-3 bg-green-500/90 backdrop-blur-sm text-white text-[10px] px-2 py-1 rounded-md font-bold flex items-center shadow-sm">

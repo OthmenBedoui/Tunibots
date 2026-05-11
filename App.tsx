@@ -8,6 +8,10 @@ import Subscription from './pages/Subscription';
 import Cart from './pages/Cart';
 import CategoryPage from './pages/CategoryPage';
 import ProductPage from './pages/ProductPage';
+import About from './pages/About';
+import Contact from './pages/Contact';
+import PrivacyPolicy from './pages/PrivacyPolicy';
+import Terms from './pages/Terms';
 import { AdminDashboard, UserDashboard } from './pages/Dashboards';
 import { User, UserRole, Listing, Order, OrderStatus, SubscriptionTier, Category, SiteConfig } from './types';
 import { api } from './services/api';
@@ -30,6 +34,17 @@ type PendingNavigation = {
   slug?: string;
 } | null;
 
+export type AdminNotificationItem = {
+  id: string;
+  type: 'order' | 'system';
+  title: string;
+  message: string;
+  orderId?: string;
+  orderNumber?: string;
+  createdAt: string;
+  read: boolean;
+};
+
 const isAdminRole = (role: UserRole) =>
   role === UserRole.ADMIN || role === UserRole.SUB_ADMIN || role === UserRole.SELLER;
 
@@ -51,6 +66,18 @@ const resolveRouteFromPath = (pathname: string): { page: string; slug?: string }
   }
   if (pathname === '/subscription') {
     return { page: 'subscription' };
+  }
+  if (pathname === '/about') {
+    return { page: 'about' };
+  }
+  if (pathname === '/contact') {
+    return { page: 'contact' };
+  }
+  if (pathname === '/privacy-policy') {
+    return { page: 'privacy-policy' };
+  }
+  if (pathname === '/terms') {
+    return { page: 'terms' };
   }
   if (pathname === '/profile') {
     return { page: 'profile' };
@@ -81,6 +108,14 @@ const getPathForPage = (page: string, slug?: string) => {
       return '/cart';
     case 'subscription':
       return '/subscription';
+    case 'about':
+      return '/about';
+    case 'contact':
+      return '/contact';
+    case 'privacy-policy':
+      return '/privacy-policy';
+    case 'terms':
+      return '/terms';
     case 'profile':
       return '/profile';
     case 'user-dashboard':
@@ -93,6 +128,50 @@ const getPathForPage = (page: string, slug?: string) => {
     default:
       return '/';
   }
+};
+
+const getVisitorId = () => {
+  const storageKey = 'tunibots_visitor_id';
+  const existing = localStorage.getItem(storageKey);
+  if (existing) return existing;
+  const next = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  localStorage.setItem(storageKey, next);
+  return next;
+};
+
+const upsertMeta = (selector: string, attrs: Record<string, string>) => {
+  let element = document.head.querySelector<HTMLMetaElement>(selector);
+  if (!element) {
+    element = document.createElement('meta');
+    document.head.appendChild(element);
+  }
+  Object.entries(attrs).forEach(([key, value]) => element?.setAttribute(key, value));
+};
+
+const ensureScript = (id: string, src: string) => {
+  if (document.getElementById(id)) return;
+  const script = document.createElement('script');
+  script.id = id;
+  script.async = true;
+  script.src = src;
+  document.head.appendChild(script);
+};
+
+const ensureInlineScript = (id: string, content: string) => {
+  if (document.getElementById(id)) return;
+  const script = document.createElement('script');
+  script.id = id;
+  script.text = content;
+  document.head.appendChild(script);
+};
+
+const getDefaultFontFamily = () =>
+  'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+
+const getFontFormat = (format: string) => {
+  if (format === 'ttf') return 'truetype';
+  if (format === 'otf') return 'opentype';
+  return format || 'woff2';
 };
 
 const App: React.FC = () => {
@@ -109,7 +188,19 @@ const App: React.FC = () => {
   const [cartCount, setCartCount] = useState(0);
   const [notification, setNotification] = useState<NotificationState>({ show: false, message: '', type: 'success' });
   const notificationTimerRef = useRef<number | null>(null);
-  const [siteConfig, setSiteConfig] = useState<SiteConfig>({ logoUrl: '', siteName: 'Tunidex', logoSize: 32, heroPromoBanners: [], floatingBrandCards: [], storeSections: [] });
+  const knownAdminOrderIdsRef = useRef<Set<string>>(new Set());
+  const adminOrdersInitializedRef = useRef(false);
+  const [adminNotifications, setAdminNotifications] = useState<AdminNotificationItem[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('tunibots_admin_notifications') || '[]');
+    } catch {
+      return [];
+    }
+  });
+  const [isAdminNotificationCenterOpen, setIsAdminNotificationCenterOpen] = useState(false);
+  const [blockingOrderNotification, setBlockingOrderNotification] = useState<AdminNotificationItem | null>(null);
+  const [adminFocusOrderId, setAdminFocusOrderId] = useState<string | null>(null);
+  const [siteConfig, setSiteConfig] = useState<SiteConfig>({ logoUrl: '', siteName: 'TuniBots', logoSize: 32, heroPromoBanners: [], floatingBrandCards: [], storeSections: [] });
   const [pendingNavigation, setPendingNavigation] = useState<PendingNavigation>(null);
   const [isAuthResolved, setIsAuthResolved] = useState(!localStorage.getItem('token'));
   const publicListings = listings.filter((listing) => !listing.isArchived);
@@ -157,9 +248,9 @@ const App: React.FC = () => {
   }, [user.id, user.role]);
 
   useEffect(() => {
-    if (siteConfig.siteName) {
-        document.title = siteConfig.siteName;
-    }
+    const title = siteConfig.seoTitle || siteConfig.siteName || 'TuniBots';
+    const description = siteConfig.seoDescription || siteConfig.footerDescription || '';
+    document.title = title;
     if (siteConfig.faviconUrl) {
         let link: HTMLLinkElement | null = document.querySelector("link[rel~='icon']");
         if (!link) {
@@ -174,7 +265,64 @@ const App: React.FC = () => {
     root.style.setProperty('--theme-accent-hover', siteConfig.accentHoverColor || '#4338ca');
     root.style.setProperty('--theme-accent-soft', siteConfig.accentSoftColor || '#e0e7ff');
     root.style.setProperty('--theme-accent-text', siteConfig.accentTextColor || '#312e81');
+    root.style.setProperty('--font-site', siteConfig.fontFamily || getDefaultFontFamily());
+
+    const styleId = 'tunibots-custom-fonts';
+    let fontStyle = document.getElementById(styleId) as HTMLStyleElement | null;
+    if (!fontStyle) {
+      fontStyle = document.createElement('style');
+      fontStyle.id = styleId;
+      document.head.appendChild(fontStyle);
+    }
+    fontStyle.textContent = (siteConfig.customFonts || [])
+      .map((font) => `@font-face{font-family:"${font.family}";src:url("${font.dataUrl}") format("${getFontFormat(font.format)}");font-display:swap;}`)
+      .join('\n');
+
+    upsertMeta('meta[name="description"]', { name: 'description', content: description });
+    upsertMeta('meta[name="keywords"]', { name: 'keywords', content: siteConfig.seoKeywords || '' });
+    upsertMeta('meta[name="robots"]', { name: 'robots', content: siteConfig.seoRobots || 'index,follow' });
+    upsertMeta('meta[property="og:title"]', { property: 'og:title', content: title });
+    upsertMeta('meta[property="og:description"]', { property: 'og:description', content: description });
+    if (siteConfig.seoOgImageUrl) upsertMeta('meta[property="og:image"]', { property: 'og:image', content: siteConfig.seoOgImageUrl });
+    if (siteConfig.seoCanonicalUrl) {
+      let link: HTMLLinkElement | null = document.querySelector('link[rel="canonical"]');
+      if (!link) {
+        link = document.createElement('link');
+        link.rel = 'canonical';
+        document.head.appendChild(link);
+      }
+      link.href = siteConfig.seoCanonicalUrl;
+    }
+    const gtagId = siteConfig.seoGoogleAnalyticsId || siteConfig.seoGoogleAdsConversionId;
+    if (gtagId) {
+      ensureScript('tunibots-gtag', `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(gtagId)}`);
+      ensureInlineScript('tunibots-gtag-init', `window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());${siteConfig.seoGoogleAnalyticsId ? `gtag('config','${siteConfig.seoGoogleAnalyticsId}');` : ''}${siteConfig.seoGoogleAdsConversionId ? `gtag('config','${siteConfig.seoGoogleAdsConversionId}');` : ''}`);
+    }
+    if (siteConfig.seoFacebookPixelId) {
+      ensureInlineScript('tunibots-meta-pixel', `!function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');fbq('init','${siteConfig.seoFacebookPixelId}');fbq('track','PageView');`);
+    }
   }, [siteConfig]);
+
+  useEffect(() => {
+    const isAdminSurface = currentPage === 'admin-dashboard' || currentPage === 'admin-login';
+    if (isAdminSurface) return;
+    const pageType = selectedProduct && currentPage === 'product'
+      ? 'product'
+      : currentPage === 'category'
+        ? 'category'
+        : currentPage;
+    const category = currentPage === 'category' ? categories.find((item) => item.slug === currentSlug) : null;
+
+    api.trackVisit({
+      path: window.location.pathname,
+      pageType,
+      listingId: selectedProduct?.id,
+      categoryId: category?.id,
+      userId: user.id,
+      visitorId: getVisitorId(),
+      referrer: document.referrer
+    }).catch(() => {});
+  }, [currentPage, currentSlug, selectedProduct?.id, categories, user.id]);
 
   useEffect(() => {
     if (!selectedProduct) return;
@@ -191,6 +339,112 @@ const App: React.FC = () => {
       api.getListings().then(setListings).catch(console.error);
       api.getCategories().then(setCategories).catch(console.error);
   };
+
+  useEffect(() => {
+    localStorage.setItem('tunibots_admin_notifications', JSON.stringify(adminNotifications.slice(0, 80)));
+  }, [adminNotifications]);
+
+  const playAdminOrderSound = () => {
+    try {
+      const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextClass) return;
+      const context = new AudioContextClass();
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(880, context.currentTime);
+      oscillator.frequency.setValueAtTime(660, context.currentTime + 0.16);
+      gain.gain.setValueAtTime(0.0001, context.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.25, context.currentTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.35);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start();
+      oscillator.stop(context.currentTime + 0.38);
+    } catch {
+      // Browser may block audio before user interaction.
+    }
+  };
+
+  useEffect(() => {
+    if (!blockingOrderNotification || siteConfig.adminNotificationSound === false) return;
+    playAdminOrderSound();
+    const interval = window.setInterval(playAdminOrderSound, 2600);
+    return () => window.clearInterval(interval);
+  }, [blockingOrderNotification, siteConfig.adminNotificationSound]);
+
+  const pushAdminOrderNotification = (order: Order) => {
+    const item: AdminNotificationItem = {
+      id: `order-${order.id}-${Date.now()}`,
+      type: 'order',
+      title: 'Nouvelle commande',
+      message: `${order.orderNumber} - ${order.customerFirstName || ''} ${order.customerLastName || ''}`.trim(),
+      orderId: order.id,
+      orderNumber: order.orderNumber,
+      createdAt: new Date().toISOString(),
+      read: false
+    };
+
+    setAdminNotifications((current) => [item, ...current].slice(0, 80));
+    setBlockingOrderNotification(item);
+    setIsAdminNotificationCenterOpen(false);
+  };
+
+  const markAdminNotificationRead = (notificationId: string) => {
+    setAdminNotifications((current) => current.map((item) => item.id === notificationId ? { ...item, read: true } : item));
+  };
+
+  const markAllAdminNotificationsRead = () => {
+    setAdminNotifications((current) => current.map((item) => ({ ...item, read: true })));
+  };
+
+  const openAdminNotificationOrder = (item: AdminNotificationItem) => {
+    markAdminNotificationRead(item.id);
+    setBlockingOrderNotification(null);
+    setIsAdminNotificationCenterOpen(false);
+    setAdminFocusOrderId(item.orderId || null);
+    navigateTo('admin-dashboard');
+    showNotification(item.orderNumber ? `Commande ${item.orderNumber} ouverte dans le dashboard` : 'Dashboard commandes ouvert');
+  };
+
+  useEffect(() => {
+    if (!isAdminRole(user.role)) {
+      adminOrdersInitializedRef.current = false;
+      knownAdminOrderIdsRef.current = new Set();
+      return;
+    }
+
+    const pollSeconds = Math.max(5, Number(siteConfig.adminNotificationPollSeconds || 15));
+    const pollOrders = async () => {
+      try {
+        const latestOrders = await api.getAllOrders();
+        const latestIds = new Set(latestOrders.map((order) => order.id));
+        const newOrders = latestOrders.filter((order) => !knownAdminOrderIdsRef.current.has(order.id));
+
+        if (adminOrdersInitializedRef.current && siteConfig.adminNotificationsEnabled !== false && newOrders.length > 0) {
+          const newest = newOrders[0];
+          showNotification(`Nouvelle commande à traiter: ${newest.orderNumber}`, 'success');
+          pushAdminOrderNotification(newest);
+          if (siteConfig.adminNotificationSound !== false) playAdminOrderSound();
+        }
+
+        adminOrdersInitializedRef.current = true;
+        knownAdminOrderIdsRef.current = latestIds;
+        setOrders(latestOrders);
+      } catch (error) {
+        console.error(error);
+      }
+    };
+
+    pollOrders();
+    const interval = window.setInterval(pollOrders, pollSeconds * 1000);
+    return () => window.clearInterval(interval);
+  }, [
+    user.role,
+    siteConfig.adminNotificationsEnabled,
+    siteConfig.adminNotificationSound,
+    siteConfig.adminNotificationPollSeconds
+  ]);
 
   const navigateTo = (page: string, slug?: string, replace = false) => {
     setCurrentPage(page);
@@ -244,6 +498,17 @@ const App: React.FC = () => {
     setPendingNavigation(null);
     navigateTo(shouldReturnToAdminLogin ? 'admin-login' : 'home');
   };
+
+  const handleAccountDeleted = () => {
+    localStorage.removeItem('token');
+    setUser(INITIAL_GUEST);
+    setOrders([]);
+    setCartCount(getGuestCartCount());
+    setPendingNavigation(null);
+    navigateTo('home');
+    showNotification('Votre compte a été supprimé avec succès.');
+  };
+
   const requireLoginFor = (page: string, slug?: string) => {
     setPendingNavigation({ page, slug });
     navigateTo('login');
@@ -352,6 +617,21 @@ const App: React.FC = () => {
     }
   };
 
+  const handleResendOrderInvoiceEmail = async (orderId: string) => {
+    try {
+        const updatedOrder = await api.resendOrderInvoiceEmail(orderId);
+        setOrders(prev => prev.map(o => o.id === orderId ? { ...o, ...updatedOrder } : o));
+        if (updatedOrder.emailStatus === 'FAILED') {
+          showNotification(updatedOrder.emailError || "L'email de facture n'a pas pu être envoyé", 'error');
+          return;
+        }
+        showNotification("Email de facture renvoyé");
+    } catch (err) {
+        console.error(err);
+        showNotification(err instanceof Error ? err.message : "Erreur d'envoi email", 'error');
+    }
+  };
+
   const handleUpdateSiteConfig = async (config: Partial<SiteConfig>) => {
     try {
         const nextConfig = await api.updateSiteConfig(config);
@@ -372,6 +652,10 @@ const App: React.FC = () => {
       case 'admin-login': return <Login onLoginSuccess={handleLoginSuccess} navigateTo={navigateTo} siteConfig={siteConfig} initialMode="login" audience="admin" />;
       case 'cart': return <Cart navigateTo={navigateTo} onCartUpdate={updateCartCount} siteConfig={siteConfig} listings={publicListings} user={user} />;
       case 'subscription': return <Subscription user={user} onSubscribe={() => refreshData()} navigateTo={navigateTo} onRequireLogin={() => requireLoginFor('subscription')} />;
+      case 'about': return <About siteConfig={siteConfig} navigateTo={navigateTo} />;
+      case 'contact': return <Contact siteConfig={siteConfig} navigateTo={navigateTo} />;
+      case 'privacy-policy': return <PrivacyPolicy siteConfig={siteConfig} />;
+      case 'terms': return <Terms siteConfig={siteConfig} />;
       
       case 'category': {
         const cat = categories.find(c => c.slug === currentSlug);
@@ -426,10 +710,13 @@ const App: React.FC = () => {
                   onRefreshCategories={refreshData} 
                   siteConfig={siteConfig}
                   onUpdateSiteConfig={handleUpdateSiteConfig}
+                  onResendOrderInvoiceEmail={handleResendOrderInvoiceEmail}
+                  focusOrderId={adminFocusOrderId}
+                  onFocusOrderHandled={() => setAdminFocusOrderId(null)}
                />;
       
       case 'user-dashboard': return <UserDashboard user={user} orders={orders} navigateTo={navigateTo} />;
-      case 'profile': return <Profile user={user} onUpdateUser={setUser} navigateTo={navigateTo} />;
+      case 'profile': return <Profile user={user} onUpdateUser={setUser} onDeleteAccountSuccess={handleAccountDeleted} navigateTo={navigateTo} />;
       default: return <Home listings={publicListings} categories={categories} onViewProduct={handleViewProduct} navigateTo={navigateTo} siteConfig={siteConfig} />;
     }
   };
@@ -447,6 +734,13 @@ const App: React.FC = () => {
         siteConfig={siteConfig}
         notification={notification}
         onCloseNotification={() => setNotification({ ...notification, show: false })}
+        adminNotifications={adminNotifications}
+        isNotificationCenterOpen={isAdminNotificationCenterOpen}
+        blockingOrderNotification={blockingOrderNotification}
+        onToggleNotificationCenter={() => setIsAdminNotificationCenterOpen((value) => !value)}
+        onCloseNotificationCenter={() => setIsAdminNotificationCenterOpen(false)}
+        onMarkAllNotificationsRead={markAllAdminNotificationsRead}
+        onOpenAdminNotification={openAdminNotificationOrder}
       >
         {renderContent()}
       </AdminLayout>

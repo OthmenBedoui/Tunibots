@@ -6,6 +6,7 @@ import * as LucideIcons from 'lucide-react';
 import { getListingDiscountLabel, getListingFinalPrice, getPackageSavings, hasListingDiscount, hasPackageSavings } from '../utils/pricing';
 import PriceDisplay from '../components/PriceDisplay';
 import { getMergedStoreSections, isStoreSectionEnabled } from '../utils/storeSections';
+import { ListingImage } from '../components/ListingImage';
 
 interface HomeProps {
   listings: Listing[];
@@ -35,7 +36,9 @@ const HorizontalListingCard: React.FC<{ listing: Listing; onViewProduct: (listin
   return (
     <article className="min-w-[280px] max-w-[280px] bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden hover:shadow-xl hover:border-indigo-100 transition-all duration-300 flex flex-col group snap-start">
       <div className="relative h-48 overflow-hidden bg-slate-100">
-        <img src={listing.imageUrl} alt={listing.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+        <div className="h-full w-full transition-transform duration-500 group-hover:scale-105">
+          <ListingImage listing={listing} />
+        </div>
         <div className="absolute top-3 left-3 bg-slate-900/80 backdrop-blur-sm text-white text-[10px] px-2 py-1 rounded-md font-bold uppercase tracking-wider">{listing.game}</div>
         {listing.isPackage && (
           <div className="absolute left-3 top-12 rounded-full bg-indigo-600 px-3 py-1 text-[11px] font-black text-white shadow-lg">
@@ -230,7 +233,9 @@ const Home: React.FC<HomeProps> = ({ listings, categories, onViewProduct, naviga
                     onClick={() => onViewProduct(listing)}
                     className="group relative h-[340px] w-[292px] shrink-0 snap-center overflow-hidden rounded-2xl bg-slate-900 text-left shadow-2xl transition duration-300 hover:shadow-xl lg:h-[432px] lg:w-full lg:hover:scale-105"
                   >
-                    <img src={listing.imageUrl} alt={listing.title} className="absolute inset-0 h-full w-full object-cover transition duration-500 group-hover:scale-105" />
+                    <div className="absolute inset-0 transition duration-500 group-hover:scale-105">
+                      <ListingImage listing={listing} />
+                    </div>
                     <div className="absolute inset-0 bg-gradient-to-t from-black via-black/45 to-transparent" />
                     {hasListingDiscount(listing) && (
                       <div className="absolute left-4 top-3 rounded-full bg-gradient-to-b from-amber-400 to-amber-700 px-2 py-0.5 text-[10px] font-black uppercase text-white">

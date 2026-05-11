@@ -4,12 +4,12 @@ const options = {
   definition: {
     openapi: '3.0.0',
     info: {
-      title: 'Tunidex Marketplace API',
+      title: 'TuniBots Marketplace API',
       version: '1.0.0',
-      description: 'API documentation for the Tunidex Marketplace backend.',
+      description: 'API documentation for the TuniBots Marketplace backend.',
       contact: {
         name: 'API Support',
-        email: 'support@tunidex.tn',
+        email: 'support@tunibots.tn',
       },
     },
     servers: [

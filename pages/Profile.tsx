@@ -3,22 +3,37 @@ import React, { useState } from 'react';
 import { User, UserRole } from '../types';
 import { api } from '../services/api';
 import { ImageInput } from '../components/ImageInput';
-import { Save, Shield, Mail, Lock, User as UserIcon, History } from 'lucide-react';
+import { AlertTriangle, Save, Shield, Mail, Lock, User as UserIcon, History, Trash2, Phone, MapPin } from 'lucide-react';
 
 interface ProfileProps {
   user: User;
   onUpdateUser: (user: User) => void;
+  onDeleteAccountSuccess: () => void;
   navigateTo: (page: string) => void;
 }
 
-const Profile: React.FC<ProfileProps> = ({ user, onUpdateUser, navigateTo }) => {
+const Profile: React.FC<ProfileProps> = ({ user, onUpdateUser, onDeleteAccountSuccess, navigateTo }) => {
+  const nameParts = (user.fullName || '').trim().split(' ').filter(Boolean);
   const [username, setUsername] = useState(user.username);
-  const [email, setEmail] = useState(user.email);
+  const [firstName, setFirstName] = useState(nameParts[0] || '');
+  const [lastName, setLastName] = useState(nameParts.slice(1).join(' '));
+  const [phone, setPhone] = useState(user.phone || '');
+  const [address, setAddress] = useState(user.address || '');
+  const [paymentMethod, setPaymentMethod] = useState(user.paymentMethod || '');
+  const [whatsappNumber, setWhatsappNumber] = useState(user.whatsappNumber || '');
   const [avatarUrl, setAvatarUrl] = useState(user.avatarUrl);
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [newEmail, setNewEmail] = useState(user.email);
+  const [emailOtp, setEmailOtp] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isEmailSending, setIsEmailSending] = useState(false);
+  const [isEmailConfirming, setIsEmailConfirming] = useState(false);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState('');
   const [message, setMessage] = useState({ type: '', text: '' });
+  const normalizedNewEmail = newEmail.trim().toLowerCase();
+  const isEmailChangePending = normalizedNewEmail && normalizedNewEmail !== user.email.toLowerCase();
 
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,9 +49,13 @@ const Profile: React.FC<ProfileProps> = ({ user, onUpdateUser, navigateTo }) => 
     try {
       const updatedUser = await api.updateProfile({
         username,
-        email,
         avatarUrl,
-        password: password || undefined
+        password: password || undefined,
+        fullName: `${firstName} ${lastName}`.trim(),
+        phone,
+        address,
+        paymentMethod,
+        whatsappNumber
       });
       onUpdateUser(updatedUser);
       setMessage({ type: 'success', text: 'Profil mis à jour avec succès !' });
@@ -56,6 +75,64 @@ const Profile: React.FC<ProfileProps> = ({ user, onUpdateUser, navigateTo }) => 
       setMessage({ type: 'success', text: 'Email de vérification envoyé !' });
     } catch {
       setMessage({ type: 'error', text: "Erreur lors de l'envoi de l'email." });
+    }
+  };
+
+  const handleRequestEmailChange = async () => {
+    if (!isEmailChangePending) {
+      setMessage({ type: 'error', text: 'Saisissez une nouvelle adresse email différente.' });
+      return;
+    }
+
+    setIsEmailSending(true);
+    setMessage({ type: '', text: '' });
+    try {
+      await api.requestEmailChange(normalizedNewEmail);
+      setMessage({ type: 'success', text: 'Code envoyé au nouveau email. Saisissez le code pour confirmer le changement.' });
+    } catch (err: unknown) {
+      setMessage({ type: 'error', text: err instanceof Error ? err.message : "Impossible d'envoyer le code." });
+    } finally {
+      setIsEmailSending(false);
+    }
+  };
+
+  const handleConfirmEmailChange = async () => {
+    if (!isEmailChangePending || !emailOtp.trim()) {
+      setMessage({ type: 'error', text: 'Nouvel email et code OTP obligatoires.' });
+      return;
+    }
+
+    setIsEmailConfirming(true);
+    setMessage({ type: '', text: '' });
+    try {
+      const updatedUser = await api.confirmEmailChange(normalizedNewEmail, emailOtp.trim());
+      onUpdateUser(updatedUser);
+      setNewEmail(updatedUser.email);
+      setEmailOtp('');
+      setMessage({ type: 'success', text: 'Adresse email mise à jour avec succès.' });
+    } catch (err: unknown) {
+      setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Code OTP invalide ou expiré.' });
+    } finally {
+      setIsEmailConfirming(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    setMessage({ type: '', text: '' });
+    if (deleteConfirmation !== 'SUPPRIMER') {
+      setMessage({ type: 'error', text: 'Veuillez saisir SUPPRIMER pour confirmer la suppression du compte.' });
+      return;
+    }
+
+    setIsDeletingAccount(true);
+    try {
+      await api.deleteAccount(deleteConfirmation);
+      onDeleteAccountSuccess();
+    } catch (err: unknown) {
+      console.error(err);
+      setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Erreur lors de la suppression du compte.' });
+    } finally {
+      setIsDeletingAccount(false);
     }
   };
 
@@ -118,6 +195,39 @@ const Profile: React.FC<ProfileProps> = ({ user, onUpdateUser, navigateTo }) => 
               </div>
             )}
           </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h3 className="mb-3 flex items-center font-black text-slate-900">
+              <Phone size={18} className="mr-2 text-indigo-600" /> Coordonnées
+            </h3>
+            <div className="space-y-3 text-sm text-slate-600">
+              <div className="flex items-center gap-2">
+                <Mail size={15} className="text-slate-400" />
+                <span className="truncate">{user.email}</span>
+              </div>
+              {phone && (
+                <div className="flex items-center gap-2">
+                  <Phone size={15} className="text-slate-400" />
+                  <span>{phone}</span>
+                </div>
+              )}
+              {address && (
+                <div className="flex items-center gap-2">
+                  <MapPin size={15} className="text-slate-400" />
+                  <span>{address}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-6 shadow-sm">
+            <h3 className="mb-2 flex items-center font-black text-red-900">
+              <AlertTriangle size={18} className="mr-2" /> Zone sensible
+            </h3>
+            <p className="text-xs leading-6 text-red-700">
+              La suppression du compte efface votre profil et votre panier. Vos anciennes commandes peuvent rester conservées pour le suivi, la facturation et le support.
+            </p>
+          </div>
         </div>
 
         {/* Main Form */}
@@ -132,6 +242,26 @@ const Profile: React.FC<ProfileProps> = ({ user, onUpdateUser, navigateTo }) => 
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Prénom</label>
+                  <input
+                    type="text"
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition"
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                    placeholder="Votre prénom"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Nom</label>
+                  <input
+                    type="text"
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition"
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
+                    placeholder="Votre nom"
+                  />
+                </div>
+                <div className="space-y-2">
                   <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Nom d'utilisateur</label>
                   <input 
                     type="text" 
@@ -142,13 +272,104 @@ const Profile: React.FC<ProfileProps> = ({ user, onUpdateUser, navigateTo }) => 
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Adresse Email</label>
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Email actuel</label>
                   <input 
                     type="email" 
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-slate-100 text-slate-500 outline-none transition"
+                    value={user.email}
+                    disabled
+                  />
+                  {user.emailVerified && <p className="text-xs font-medium text-emerald-600">Email confirmé. Pour le changer, utilisez la validation par code ci-dessous.</p>}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-5">
+                <h3 className="mb-4 flex items-center font-bold text-slate-900">
+                  <Mail size={18} className="mr-2 text-indigo-600" /> Changer l’adresse email
+                </h3>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_auto] md:items-end">
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Nouveau email</label>
+                    <input
+                      type="email"
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:ring-2 focus:ring-indigo-500"
+                      value={newEmail}
+                      onChange={(e) => setNewEmail(e.target.value)}
+                      placeholder="nouveau@email.com"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleRequestEmailChange}
+                    disabled={isEmailSending || !isEmailChangePending}
+                    className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-black text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isEmailSending ? 'Envoi...' : 'Envoyer le code'}
+                  </button>
+                </div>
+                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-[1fr_auto] md:items-end">
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Code reçu</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={6}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-center font-black tracking-[0.4em] outline-none transition focus:ring-2 focus:ring-indigo-500"
+                      value={emailOtp}
+                      onChange={(e) => setEmailOtp(e.target.value)}
+                      placeholder="000000"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleConfirmEmailChange}
+                    disabled={isEmailConfirming || !isEmailChangePending || emailOtp.trim().length < 6}
+                    className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-black text-white hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isEmailConfirming ? 'Validation...' : 'Confirmer email'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Numéro téléphone</label>
+                  <input
+                    type="tel"
                     className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="+216 ..."
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">WhatsApp</label>
+                  <input
+                    type="tel"
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition"
+                    value={whatsappNumber}
+                    onChange={(e) => setWhatsappNumber(e.target.value)}
+                    placeholder="+216 ..."
+                  />
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Adresse</label>
+                  <input
+                    type="text"
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition"
+                    value={address}
+                    onChange={(e) => setAddress(e.target.value)}
+                    placeholder="Adresse de livraison / facturation"
+                  />
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Méthode de paiement préférée</label>
+                  <input
+                    type="text"
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition"
+                    value={paymentMethod}
+                    onChange={(e) => setPaymentMethod(e.target.value)}
+                    placeholder="Ex: D17, virement, cash..."
                   />
                 </div>
               </div>
@@ -200,6 +421,44 @@ const Profile: React.FC<ProfileProps> = ({ user, onUpdateUser, navigateTo }) => 
                 Enregistrer les modifications
               </button>
             </form>
+          </div>
+
+          <div className="mt-8 rounded-2xl border border-red-200 bg-white p-8 shadow-sm">
+            <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
+              <div>
+                <div className="mb-2 flex items-center text-sm font-black uppercase tracking-[0.18em] text-red-600">
+                  <Trash2 size={16} className="mr-2" /> Suppression compte
+                </div>
+                <h3 className="text-2xl font-black text-slate-950">Supprimer définitivement mon compte</h3>
+                <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-600">
+                  Cette action supprime vos informations de connexion et vous déconnecte immédiatement. Pour des raisons de facturation et de support, les commandes déjà passées restent consultables par l’administration sans lien actif vers votre compte.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-6 grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
+              <div>
+                <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">
+                  Tapez SUPPRIMER pour confirmer
+                </label>
+                <input
+                  type="text"
+                  value={deleteConfirmation}
+                  onChange={(e) => setDeleteConfirmation(e.target.value)}
+                  className="w-full rounded-xl border border-red-200 bg-red-50/50 px-4 py-3 font-bold text-red-900 outline-none focus:ring-2 focus:ring-red-500"
+                  placeholder="SUPPRIMER"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleDeleteAccount}
+                disabled={isDeletingAccount || deleteConfirmation !== 'SUPPRIMER'}
+                className="inline-flex items-center justify-center rounded-xl bg-red-600 px-5 py-3 font-black text-white shadow-lg shadow-red-100 transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isDeletingAccount ? <Loader2 className="mr-2" /> : <Trash2 size={18} className="mr-2" />}
+                Supprimer mon compte
+              </button>
+            </div>
           </div>
         </div>
       </div>

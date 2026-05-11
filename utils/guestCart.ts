@@ -1,6 +1,6 @@
 import type { CartItem, Listing } from '../types';
 
-const GUEST_CART_KEY = 'tunidex_guest_cart';
+const GUEST_CART_KEY = 'tunibots_guest_cart';
 
 type StoredGuestCartItem = {
   listingId: string;

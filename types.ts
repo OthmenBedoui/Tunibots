@@ -13,6 +13,8 @@ export enum SubscriptionTier {
 }
 
 export enum OrderStatus {
+  IN_PROGRESS = 'IN_PROGRESS',
+  DELIVERED = 'DELIVERED',
   REGISTERED = 'REGISTERED',
   PENDING_PAYMENT = 'PENDING_PAYMENT',
   PAYMENT_RECEIVED = 'PAYMENT_RECEIVED',
@@ -93,6 +95,12 @@ export interface User {
   address?: string;
   phone?: string;
   paymentMethod?: string;
+  whatsappNumber?: string;
+  whatsappBotId?: string;
+  whatsappOptIn?: boolean;
+  whatsappWelcomeStatus?: 'NOT_REQUESTED' | 'PENDING' | 'PENDING_CONFIGURATION' | 'SENT' | 'FAILED';
+  whatsappWelcomeSentAt?: string;
+  whatsappWelcomeError?: string;
   createdAt?: string;
 }
 
@@ -116,7 +124,8 @@ export interface Listing {
 
   // Images
   logoUrl?: string; // The specific brand logo (e.g. Netflix logo)
-  imageUrl: string; // The main thumbnail
+  imageUrl?: string; // The main thumbnail. Packages can use included product images.
+  cardTemplate?: string;
   gallery: string[]; // Array of image URLs
 
   // Meta
@@ -176,6 +185,8 @@ export interface SiteConfig {
   accentHoverColor?: string;
   accentSoftColor?: string;
   accentTextColor?: string;
+  fontFamily?: string;
+  customFonts?: CustomFont[];
   headerAnnouncement?: string;
   headerSearchPlaceholder?: string;
   headerCtaLabel?: string;
@@ -186,6 +197,17 @@ export interface SiteConfig {
   footerWhatsapp?: string;
   footerAddress?: string;
   footerCopyright?: string;
+  seoTitle?: string;
+  seoDescription?: string;
+  seoKeywords?: string;
+  seoCanonicalUrl?: string;
+  seoOgImageUrl?: string;
+  seoRobots?: string;
+  seoSitemapEnabled?: boolean;
+  seoOrganizationName?: string;
+  seoGoogleAnalyticsId?: string;
+  seoGoogleAdsConversionId?: string;
+  seoFacebookPixelId?: string;
   // SMTP Configuration
   smtpMailerName?: string;
   smtpHost?: string;
@@ -195,10 +217,29 @@ export interface SiteConfig {
   smtpEmailId?: string;
   smtpEncryption?: string;
   smtpPassword?: string;
+  emailTemplates?: Record<string, { subject: string; html: string }>;
+  adminNotificationsEnabled?: boolean;
+  adminNotificationSound?: boolean;
+  adminNotificationPollSeconds?: number;
+  whatsappNotificationsEnabled?: boolean;
+  whatsappNotificationWebhookUrl?: string;
+  telegramNotificationsEnabled?: boolean;
+  telegramBotToken?: string;
+  telegramChatId?: string;
+  messengerNotificationsEnabled?: boolean;
+  messengerNotificationWebhookUrl?: string;
   // Payment Gateway: Click2pay
   click2payEnabled?: boolean;
   click2payMerchantId?: string;
   click2payApiKey?: string;
+}
+
+export interface CustomFont {
+  id: string;
+  name: string;
+  family: string;
+  dataUrl: string;
+  format: string;
 }
 
 export interface StoreSectionConfig {

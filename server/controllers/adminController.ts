@@ -5,6 +5,8 @@ import { Prisma } from '@prisma/client';
 import { promises as fs } from 'fs';
 import path from 'path';
 import ExcelJS from 'exceljs';
+import { DEFAULT_EMAIL_TEMPLATES, getEmailTemplate, renderTemplate, sendEmail } from '../utils/email.js';
+import { resendOrderConfirmationEmail } from '../services/orderEmailService.js';
 
 const SITE_CONFIG_KEY = 'site';
 const legacySiteConfigPath = path.join(process.cwd(), 'server', 'data', 'site-config.json');
@@ -26,6 +28,8 @@ type SiteConfigData = {
     accentHoverColor: string;
     accentSoftColor: string;
     accentTextColor: string;
+    fontFamily: string;
+    customFonts?: Array<{ id: string; name: string; family: string; dataUrl: string; format: string }>;
     headerAnnouncement: string;
     headerSearchPlaceholder: string;
     headerCtaLabel: string;
@@ -36,6 +40,17 @@ type SiteConfigData = {
     footerWhatsapp: string;
     footerAddress: string;
     footerCopyright: string;
+    seoTitle: string;
+    seoDescription: string;
+    seoKeywords: string;
+    seoCanonicalUrl: string;
+    seoOgImageUrl: string;
+    seoRobots: string;
+    seoSitemapEnabled: boolean;
+    seoOrganizationName: string;
+    seoGoogleAnalyticsId: string;
+    seoGoogleAdsConversionId: string;
+    seoFacebookPixelId: string;
     smtpMailerName: string;
     smtpHost: string;
     smtpDriver: string;
@@ -44,6 +59,17 @@ type SiteConfigData = {
     smtpEmailId: string;
     smtpEncryption: string;
     smtpPassword: string;
+    emailTemplates?: Record<string, { subject: string; html: string }>;
+    adminNotificationsEnabled: boolean;
+    adminNotificationSound: boolean;
+    adminNotificationPollSeconds: number;
+    whatsappNotificationsEnabled: boolean;
+    whatsappNotificationWebhookUrl: string;
+    telegramNotificationsEnabled: boolean;
+    telegramBotToken: string;
+    telegramChatId: string;
+    messengerNotificationsEnabled: boolean;
+    messengerNotificationWebhookUrl: string;
     click2payEnabled: boolean;
     click2payMerchantId: string;
     click2payApiKey: string;
@@ -51,7 +77,7 @@ type SiteConfigData = {
 
 const defaultSiteConfig: SiteConfigData = {
     logoUrl: '',
-    siteName: 'Tunidex',
+    siteName: 'TuniBots',
     logoSize: 32,
     faviconUrl: '',
     primaryColor: '',
@@ -77,16 +103,29 @@ const defaultSiteConfig: SiteConfigData = {
     accentHoverColor: '#4338ca',
     accentSoftColor: '#e0e7ff',
     accentTextColor: '#312e81',
+    fontFamily: '"Albeit Grotesk Caps", "Albeit Grotesk", "Arial Narrow", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    customFonts: [],
     headerAnnouncement: 'Bienvenue sur la première plateforme digitale en Tunisie !',
     headerSearchPlaceholder: 'Rechercher jeux, items, comptes...',
     headerCtaLabel: "S'inscrire",
     footerTagline: 'Marketplace digitale premium',
     footerDescription: 'La destination premium pour vos comptes, licences, abonnements, outils IA et services digitaux en Tunisie.',
-    footerEmail: 'support@tunidex.tn',
+    footerEmail: 'support@tunibots.tn',
     footerPhone: '+216 00 000 000',
     footerWhatsapp: '+216 00 000 000',
     footerAddress: 'Tunis, Tunisie',
     footerCopyright: 'Tous droits réservés.',
+    seoTitle: 'TuniBots | Marketplace digitale en Tunisie',
+    seoDescription: 'Achetez des produits digitaux, comptes, licences, abonnements et services numériques en Tunisie avec livraison rapide et support local.',
+    seoKeywords: 'marketplace digitale tunisie, comptes gaming, abonnements, licences, services digitaux, TuniBots',
+    seoCanonicalUrl: '',
+    seoOgImageUrl: '',
+    seoRobots: 'index,follow',
+    seoSitemapEnabled: true,
+    seoOrganizationName: 'TuniBots',
+    seoGoogleAnalyticsId: '',
+    seoGoogleAdsConversionId: '',
+    seoFacebookPixelId: '',
     smtpMailerName: '',
     smtpHost: '',
     smtpDriver: 'smtp',
@@ -95,6 +134,17 @@ const defaultSiteConfig: SiteConfigData = {
     smtpEmailId: '',
     smtpEncryption: 'tls',
     smtpPassword: '',
+    emailTemplates: DEFAULT_EMAIL_TEMPLATES,
+    adminNotificationsEnabled: true,
+    adminNotificationSound: true,
+    adminNotificationPollSeconds: 15,
+    whatsappNotificationsEnabled: false,
+    whatsappNotificationWebhookUrl: '',
+    telegramNotificationsEnabled: false,
+    telegramBotToken: '',
+    telegramChatId: '',
+    messengerNotificationsEnabled: false,
+    messengerNotificationWebhookUrl: '',
     click2payEnabled: false,
     click2payMerchantId: '',
     click2payApiKey: ''
@@ -278,6 +328,44 @@ export const updateSiteConfig = async (req: Request, res: Response) => {
     res.json(nextConfig);
 };
 
+export const sendTestEmail = async (req: Request, res: Response) => {
+    const to = typeof req.body?.to === 'string' ? req.body.to.trim().toLowerCase() : '';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+        return res.status(400).json({ error: 'Adresse email de test invalide.' });
+    }
+
+    const template = await getEmailTemplate('testEmail');
+    const sent = await sendEmail(
+        to,
+        renderTemplate(template.subject, {}),
+        renderTemplate(template.html, {})
+    );
+
+    res.json({ success: true, message: 'Email de test envoyé.', messageId: sent.messageId });
+};
+
+export const resendOrderInvoiceEmail = async (req: Request, res: Response) => {
+    const result = await resendOrderConfirmationEmail(req.params.id);
+    const order = await prisma.order.findUnique({
+        where: { id: req.params.id },
+        include: {
+            items: true,
+            invoice: true,
+            user: {
+                select: {
+                    id: true,
+                    username: true,
+                    email: true,
+                    avatarUrl: true
+                }
+            }
+        }
+    });
+
+    if (!order) return res.status(404).json({ error: 'Commande introuvable.' });
+    res.json({ ...order, emailStatus: result.status, emailError: result.error });
+};
+
 /**
  * @swagger
  * /api/users/{id}/role:
@@ -360,7 +448,7 @@ export const updateOrderStatus = async (req: Request, res: Response) => {
         where: { id: req.params.id },
         data: {
             status: req.body.status,
-            paymentConfirmedAt: req.body.status === 'PAYMENT_RECEIVED' ? new Date() : undefined
+            paymentConfirmedAt: ['IN_PROGRESS', 'PAYMENT_RECEIVED', 'DELIVERED', 'COMPLETED'].includes(req.body.status) ? new Date() : undefined
         },
         include: {
             items: true,
@@ -451,7 +539,7 @@ export const exportSiteData = async (_req: Request, res: Response) => {
     ]);
 
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'Tunidex Admin';
+    workbook.creator = 'TuniBots Admin';
     workbook.created = new Date();
 
     const categorySheet = workbook.addWorksheet('Categories');
@@ -522,7 +610,7 @@ export const exportSiteData = async (_req: Request, res: Response) => {
 
     const buffer = await workbook.xlsx.writeBuffer();
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="tunidex-data-${new Date().toISOString().slice(0, 10)}.xlsx"`);
+    res.setHeader('Content-Disposition', `attachment; filename="tunibots-data-${new Date().toISOString().slice(0, 10)}.xlsx"`);
     res.send(Buffer.from(buffer));
 };
 

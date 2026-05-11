@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowRight, CheckCircle2, CreditCard, Lock, ShoppingBag, Smartphone, Trash2, Wallet } from 'lucide-react';
+import { ArrowRight, CheckCircle2, CreditCard, Lock, ShoppingBag, Smartphone, Trash2, Wallet, X } from 'lucide-react';
 import { api } from '../services/api';
 import { CartItem, Listing, SiteConfig, User } from '../types';
 import { clearGuestCart, getGuestCartCount, getGuestCartItems, removeGuestCartLine } from '../utils/guestCart';
 import { getListingFinalPrice } from '../utils/pricing';
-import { richTextToPlainText } from '../utils/richText';
 import PriceDisplay from '../components/PriceDisplay';
+import { ListingImage } from '../components/ListingImage';
 
 interface CartProps {
   navigateTo: (page: string) => void;
@@ -31,6 +31,7 @@ type CheckoutSuccessState = {
 const Cart: React.FC<CartProps> = ({ navigateTo, onCartUpdate, siteConfig, listings, user }) => {
   const [items, setItems] = useState<CartItem[]>([]);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
+  const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('whatsapp');
   const [formError, setFormError] = useState('');
   const [guestForm, setGuestForm] = useState<GuestFormState>({
@@ -134,6 +135,7 @@ const Cart: React.FC<CartProps> = ({ navigateTo, onCartUpdate, siteConfig, listi
         invoiceNumber: order.invoice?.invoiceNumber,
         emailStatus: order.emailStatus
       });
+      setShowPaymentForm(false);
     } catch (error) {
       setFormError(error instanceof Error ? error.message : 'Impossible d’enregistrer votre commande.');
     } finally {
@@ -151,7 +153,7 @@ const Cart: React.FC<CartProps> = ({ navigateTo, onCartUpdate, siteConfig, listi
             </div>
             <h1 className="text-3xl font-black">Votre commande a bien été enregistrée</h1>
             <p className="mt-3 max-w-2xl text-sm text-slate-200">
-              Le paiement reste en attente de validation. Conservez votre numéro de commande pour le suivi.
+              Votre commande est en cours. Notre service support vous guidera dans les prochaines étapes.
             </p>
           </div>
 
@@ -166,8 +168,8 @@ const Cart: React.FC<CartProps> = ({ navigateTo, onCartUpdate, siteConfig, listi
               </div>
 
               <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-sm text-emerald-900">
-                <p>Une facture a été envoyée à votre adresse email.</p>
-                <p className="mt-2">Un agent vous contactera sur WhatsApp pour finaliser le paiement.</p>
+                <p>Une facture TuniBots a été envoyée à votre adresse email.</p>
+                <p className="mt-2">Un membre de notre support vous guidera dans votre commande.</p>
                 <p className="mt-2">Conservez votre numéro de commande pour le suivi.</p>
                 {checkoutSuccess.emailStatus === 'FAILED' && (
                   <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800">
@@ -178,18 +180,31 @@ const Cart: React.FC<CartProps> = ({ navigateTo, onCartUpdate, siteConfig, listi
             </div>
 
             <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6">
-              <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-indigo-600">Optionnel</div>
-              <h2 className="mt-3 text-xl font-black text-slate-900">Créez un compte</h2>
+              <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-indigo-600">{isGuest ? 'Optionnel' : 'Suivi'}</div>
+              <h2 className="mt-3 text-xl font-black text-slate-900">{isGuest ? 'Créez un compte' : 'Votre compte est à jour'}</h2>
               <p className="mt-3 text-sm leading-6 text-slate-600">
-                Créez un compte pour consulter votre historique d’achat, accéder à vos factures et profiter de points de fidélité.
+                {isGuest
+                  ? 'Créez un compte pour consulter votre historique d’achat, accéder à vos factures et profiter de points de fidélité.'
+                  : 'Vous pouvez suivre cette commande depuis votre espace client et consulter votre historique à tout moment.'}
               </p>
-              <button
-                type="button"
-                onClick={() => navigateTo('register')}
-                className="mt-6 w-full rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white hover:bg-indigo-700"
-              >
-                Créer un compte
-              </button>
+              {isGuest && (
+                <button
+                  type="button"
+                  onClick={() => navigateTo('register')}
+                  className="mt-6 w-full rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white hover:bg-indigo-700"
+                >
+                  Créer un compte
+                </button>
+              )}
+              {!isGuest && (
+                <button
+                  type="button"
+                  onClick={() => navigateTo('user-dashboard')}
+                  className="mt-6 w-full rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white hover:bg-indigo-700"
+                >
+                  Voir mes commandes
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => navigateTo('home')}
@@ -220,6 +235,94 @@ const Cart: React.FC<CartProps> = ({ navigateTo, onCartUpdate, siteConfig, listi
 
   return (
     <div className="max-w-7xl mx-auto py-12 px-4">
+      {showPaymentForm && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-2xl overflow-hidden rounded-3xl bg-white shadow-2xl">
+            <div className="flex items-start justify-between border-b border-slate-100 px-6 py-5">
+              <div>
+                <div className="text-xs font-black uppercase tracking-[0.2em] text-indigo-600">Paiement</div>
+                <h2 className="mt-1 text-2xl font-black text-slate-900">Choisir votre méthode de paiement</h2>
+                <p className="mt-1 text-sm text-slate-500">Après validation, une facture TuniBots sera envoyée par email.</p>
+              </div>
+              <button type="button" onClick={() => setShowPaymentForm(false)} className="rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-6 px-6 py-6">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {['whatsapp', 'edinar', 'flouci', ...(siteConfig.click2payEnabled ? ['click2pay'] : [])].map((pm) => (
+                  <button
+                    key={pm}
+                    type="button"
+                    onClick={() => setPaymentMethod(pm)}
+                    className={`min-h-[88px] rounded-2xl border p-3 flex flex-col items-center justify-center transition-all ${paymentMethod === pm ? 'border-indigo-600 bg-indigo-50 text-indigo-600 ring-1 ring-indigo-600' : 'border-slate-200 hover:border-slate-300 text-slate-500'}`}
+                  >
+                    {pm === 'whatsapp' && <Lock size={22} className="mb-2" />}
+                    {pm === 'edinar' && <CreditCard size={22} className="mb-2" />}
+                    {pm === 'flouci' && <Smartphone size={22} className="mb-2" />}
+                    {pm === 'click2pay' && <CreditCard size={22} className="mb-2 text-amber-500" />}
+                    <span className="text-[11px] font-black uppercase">{pm}</span>
+                  </button>
+                ))}
+              </div>
+
+              {isGuest && (
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <label className="mb-2 block text-sm font-bold text-slate-700">Prénom</label>
+                    <input type="text" value={guestForm.firstName} onChange={(e) => handleGuestFieldChange('firstName', e.target.value)} className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-indigo-500" />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-bold text-slate-700">Nom</label>
+                    <input type="text" value={guestForm.lastName} onChange={(e) => handleGuestFieldChange('lastName', e.target.value)} className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-indigo-500" />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-bold text-slate-700">Email</label>
+                    <input type="email" value={guestForm.email} onChange={(e) => handleGuestFieldChange('email', e.target.value)} className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-indigo-500" />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-bold text-slate-700">Numéro de téléphone</label>
+                    <input type="tel" value={guestForm.phone} onChange={(e) => handleGuestFieldChange('phone', e.target.value)} placeholder="+216 xx xxx xxx" className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-indigo-500" />
+                  </div>
+                </div>
+              )}
+
+              {!isGuest && !user.phone && (
+                <div>
+                  <label className="mb-2 block text-sm font-bold text-slate-700">Numéro de téléphone</label>
+                  <input type="tel" value={guestForm.phone} onChange={(e) => handleGuestFieldChange('phone', e.target.value)} placeholder="+216 xx xxx xxx" className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-indigo-500" />
+                </div>
+              )}
+
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex justify-between text-sm text-slate-600"><span>Total à payer</span><span className="font-bold">{total.toFixed(2)} TND</span></div>
+              </div>
+
+              {formError && (
+                <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {formError}
+                </div>
+              )}
+            </div>
+
+            <div className="border-t border-slate-100 px-6 py-5">
+              <button
+                onClick={handleCheckout}
+                disabled={isCheckingOut}
+                className="flex w-full items-center justify-center rounded-xl bg-slate-900 px-5 py-4 font-bold text-white shadow-lg transition hover:bg-black disabled:opacity-70"
+              >
+                {isCheckingOut ? (
+                  <div className="mr-2 h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
+                ) : (
+                  <>Valider et recevoir la facture <ArrowRight size={20} className="ml-2" /></>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <h1 className="text-3xl font-black mb-8 flex items-center text-slate-900">
         <ShoppingBag className="mr-3" />
         Mon Panier
@@ -230,7 +333,9 @@ const Cart: React.FC<CartProps> = ({ navigateTo, onCartUpdate, siteConfig, listi
         <div className="lg:col-span-2 space-y-6">
           {items.map((item) => (
             <div key={item.id} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col sm:flex-row items-center transition-all hover:shadow-md">
-              <img src={item.listing.imageUrl} alt={item.listing.title} className="w-24 h-24 object-cover rounded-xl sm:mr-6 mb-4 sm:mb-0 shadow-sm" />
+              <div className="mb-4 h-24 w-24 overflow-hidden rounded-xl shadow-sm sm:mr-6 sm:mb-0">
+                <ListingImage listing={item.listing} />
+              </div>
               <div className="flex-1 text-center sm:text-left">
                 <div className="text-xs font-bold text-indigo-600 uppercase mb-1">{item.listing.game}</div>
                 <h3 className="font-bold text-slate-900 text-xl mb-1">{item.listing.title}</h3>
@@ -239,7 +344,6 @@ const Cart: React.FC<CartProps> = ({ navigateTo, onCartUpdate, siteConfig, listi
                     {item.listing.variantLabel ? `${item.listing.variantLabel}: ` : ''}{item.variant.name}
                   </div>
                 )}
-                <p className="text-sm text-slate-400">{richTextToPlainText(item.listing.description)}</p>
               </div>
               <div className="text-right mx-6 mt-4 sm:mt-0">
                 {item.variant ? (
@@ -264,68 +368,8 @@ const Cart: React.FC<CartProps> = ({ navigateTo, onCartUpdate, siteConfig, listi
             </h3>
 
             <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 mb-6">
-              Votre commande sera enregistrée avec paiement en attente. Un agent Tunidex vous contactera sur WhatsApp pour finaliser le règlement.
+              Cliquez sur confirmer le paiement pour choisir votre méthode. Une facture TuniBots sera envoyée par email, puis notre support vous guidera.
             </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-8">
-              {['whatsapp', 'edinar', 'flouci', ...(siteConfig.click2payEnabled ? ['click2pay'] : [])].map((pm) => (
-                <button
-                  key={pm}
-                  onClick={() => setPaymentMethod(pm)}
-                  className={`border rounded-xl p-3 flex flex-col items-center justify-center transition-all ${paymentMethod === pm ? 'border-indigo-600 bg-indigo-50 text-indigo-600 ring-1 ring-indigo-600' : 'border-slate-200 hover:border-slate-300 text-slate-500'}`}
-                >
-                  {pm === 'whatsapp' && <Lock size={20} className="mb-1" />}
-                  {pm === 'edinar' && <CreditCard size={20} className="mb-1" />}
-                  {pm === 'flouci' && <Smartphone size={20} className="mb-1" />}
-                  {pm === 'click2pay' && <CreditCard size={20} className="mb-1 text-amber-500" />}
-                  <span className="text-[10px] font-bold uppercase">{pm}</span>
-                </button>
-              ))}
-            </div>
-
-            {isGuest && (
-              <div className="space-y-4 mb-8">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-semibold text-slate-700 mb-2">Prénom</label>
-                    <input
-                      type="text"
-                      value={guestForm.firstName}
-                      onChange={(e) => handleGuestFieldChange('firstName', e.target.value)}
-                      className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-indigo-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-slate-700 mb-2">Nom</label>
-                    <input
-                      type="text"
-                      value={guestForm.lastName}
-                      onChange={(e) => handleGuestFieldChange('lastName', e.target.value)}
-                      className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-indigo-500"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-2">Email</label>
-                  <input
-                    type="email"
-                    value={guestForm.email}
-                    onChange={(e) => handleGuestFieldChange('email', e.target.value)}
-                    className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-indigo-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-2">Numéro de téléphone</label>
-                  <input
-                    type="tel"
-                    value={guestForm.phone}
-                    onChange={(e) => handleGuestFieldChange('phone', e.target.value)}
-                    placeholder="+216 xx xxx xxx"
-                    className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-indigo-500"
-                  />
-                </div>
-              </div>
-            )}
 
             {!isGuest && (
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 mb-8 text-sm text-slate-600">
@@ -350,15 +394,11 @@ const Cart: React.FC<CartProps> = ({ navigateTo, onCartUpdate, siteConfig, listi
             )}
 
             <button
-              onClick={handleCheckout}
+              onClick={() => setShowPaymentForm(true)}
               disabled={isCheckingOut}
               className="w-full bg-slate-900 text-white py-4 rounded-xl font-bold hover:bg-black transition-all flex items-center justify-center disabled:opacity-70 shadow-lg"
             >
-              {isCheckingOut ? (
-                <div className="animate-spin w-5 h-5 border-2 border-white border-t-transparent rounded-full mr-2"></div>
-              ) : (
-                <>Enregistrer la commande <ArrowRight size={20} className="ml-2" /></>
-              )}
+              Confirmer le paiement <ArrowRight size={20} className="ml-2" />
             </button>
           </div>
         </div>

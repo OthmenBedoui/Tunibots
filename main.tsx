@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
 
-const savedTheme = window.localStorage.getItem('tunidex-theme');
+const savedTheme = window.localStorage.getItem('tunibots-theme');
 const prefersDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches;
 document.documentElement.classList.toggle('dark', savedTheme === 'dark' || (!savedTheme && prefersDark));
 

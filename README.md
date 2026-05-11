@@ -1,4 +1,4 @@
-# Tunidex
+# TuniBots
 
 Guide d'installation du projet en local et sur serveur.
 
@@ -22,7 +22,7 @@ npm -v
 
 ```bash
 git clone <URL_DU_REPO>
-cd Tunidex
+cd TuniBots
 ```
 
 ## 3. Installer les dépendances
@@ -33,7 +33,7 @@ npm install
 
 ## 4. Configurer les variables d'environnement
 
-Le projet utilise le fichier [`.env`](c:\Users\Othme\OneDrive\Documents\Tunidex\.env).
+Le projet utilise le fichier [`.env`](c:\Users\Othme\OneDrive\Documents\TuniBots\.env).
 
 Exemple minimal :
 
@@ -41,7 +41,9 @@ Exemple minimal :
 NODE_ENV=development
 JWT_SECRET="tunidev"
 API_KEY="votre_cle_gemini_api"
-DATABASE_URL="postgresql://postgres:0507@localhost:5432/tunidex"
+DATABASE_URL="postgresql://postgres:0507@localhost:5432/tunibots"
+WHATSAPP_BOT_WEBHOOK_URL=""
+WHATSAPP_BOT_WEBHOOK_TOKEN=""
 ```
 
 Notes :
@@ -49,18 +51,20 @@ Notes :
 - `DATABASE_URL` doit pointer vers ta base PostgreSQL.
 - `API_KEY` est utilisée pour les fonctionnalités IA.
 - `JWT_SECRET` est utilisée pour l'authentification.
+- `WHATSAPP_BOT_WEBHOOK_URL` permet au bot WhatsApp de recevoir les demandes de message de bienvenue.
+- `WHATSAPP_BOT_WEBHOOK_TOKEN` est optionnel et sera envoyé en Bearer token au webhook.
 
 ## 5. Préparer PostgreSQL en local
 
 Créer la base si elle n'existe pas encore :
 
 ```sql
-CREATE DATABASE tunidex;
+CREATE DATABASE tunibots;
 ```
 
 Paramètres actuellement attendus :
 
-- Base : `tunidex`
+- Base : `tunibots`
 - User : `postgres`
 - Mot de passe : `0507`
 - Host : `localhost`
@@ -201,16 +205,16 @@ sudo -u postgres psql
 Puis :
 
 ```sql
-CREATE DATABASE tunidex;
-CREATE USER tunidex_user WITH ENCRYPTED PASSWORD 'mot_de_passe_solide';
-GRANT ALL PRIVILEGES ON DATABASE tunidex TO tunidex_user;
+CREATE DATABASE tunibots;
+CREATE USER tunibots_user WITH ENCRYPTED PASSWORD 'mot_de_passe_solide';
+GRANT ALL PRIVILEGES ON DATABASE tunibots TO tunibots_user;
 ```
 
 ### Étape 3. Cloner et installer le projet
 
 ```bash
 git clone <URL_DU_REPO>
-cd Tunidex
+cd TuniBots
 npm install
 ```
 
@@ -222,7 +226,7 @@ Exemple serveur :
 NODE_ENV=production
 JWT_SECRET="change_ce_secret"
 API_KEY="votre_cle_gemini_api"
-DATABASE_URL="postgresql://tunidex_user:mot_de_passe_solide@localhost:5432/tunidex"
+DATABASE_URL="postgresql://tunibots_user:mot_de_passe_solide@localhost:5432/tunibots"
 ```
 
 ### Étape 5. Exécuter Prisma
@@ -252,16 +256,16 @@ Installer PM2 :
 npm install -g pm2
 ```
 
-Démarrer Tunidex :
+Démarrer TuniBots :
 
 ```bash
-pm2 start "npx tsx server/index.ts" --name tunidex --env production
+pm2 start "npx tsx server/index.ts" --name tunibots --env production
 ```
 
 Ou :
 
 ```bash
-pm2 start server/index.ts --name tunidex --interpreter npx --interpreter-args tsx
+pm2 start server/index.ts --name tunibots --interpreter npx --interpreter-args tsx
 ```
 
 Sauvegarder :
@@ -274,7 +278,7 @@ pm2 startup
 Logs :
 
 ```bash
-pm2 logs tunidex
+pm2 logs tunibots
 ```
 
 ## 15. Reverse proxy Nginx
@@ -358,7 +362,7 @@ npx prisma studio --schema server/schema.prisma
 ## 18. Structure utile du projet
 
 ```text
-Tunidex/
+TuniBots/
 ├── components/
 ├── pages/
 ├── services/
@@ -385,7 +389,7 @@ Vérifie :
 
 - PostgreSQL est démarré
 - `DATABASE_URL` est correcte
-- la base `tunidex` existe
+- la base `tunibots` existe
 - l'utilisateur PostgreSQL a les droits
 
 ### Les tables ne sont pas créées

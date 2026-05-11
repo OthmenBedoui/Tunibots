@@ -3,6 +3,7 @@ import { Request, Response } from 'express';
 import prisma from '../prisma.js';
 import { clearUserCart, createCheckoutOrder } from '../services/checkoutService.js';
 import { sendOrderConfirmationEmail } from '../services/orderEmailService.js';
+import { notifyNewOrder } from '../services/orderNotificationService.js';
 
 interface AuthRequest extends Request {
   user?: {
@@ -175,7 +176,7 @@ export const checkout = async (req: AuthRequest, res: Response) => {
     try {
         const order = await createCheckoutOrder({
             firstName: user.fullName?.split(' ')[0] || user.username || 'Client',
-            lastName: user.fullName?.split(' ').slice(1).join(' ') || user.username || 'Tunidex',
+            lastName: user.fullName?.split(' ').slice(1).join(' ') || user.username || 'TuniBots',
             email: user.email,
             phone: user.phone || req.body.phone || '+216',
             paymentMethod: req.body.paymentMethod,
@@ -185,8 +186,9 @@ export const checkout = async (req: AuthRequest, res: Response) => {
         });
 
         await clearUserCart(user.id);
-        await sendOrderConfirmationEmail(order);
-        res.json(serializeOrder(order));
+        await notifyNewOrder(order);
+        const emailResult = await sendOrderConfirmationEmail(order);
+        res.json(serializeOrder({ ...order, emailStatus: emailResult.status, emailError: emailResult.error }));
     } catch (error) {
         res.status(400).json({ error: error instanceof Error ? error.message : 'Impossible de créer la commande.' });
     }
@@ -203,8 +205,9 @@ export const guestCheckout = async (req: Request, res: Response) => {
             items: req.body.items
         });
 
-        await sendOrderConfirmationEmail(order);
-        res.status(201).json(serializeOrder(order));
+        await notifyNewOrder(order);
+        const emailResult = await sendOrderConfirmationEmail(order);
+        res.status(201).json(serializeOrder({ ...order, emailStatus: emailResult.status, emailError: emailResult.error }));
     } catch (error) {
         res.status(400).json({ error: error instanceof Error ? error.message : 'Impossible de créer la commande.' });
     }

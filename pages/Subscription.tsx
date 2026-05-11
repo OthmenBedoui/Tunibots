@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AlertCircle, Check, CheckCircle2, Crown, Zap, User, MapPin, Phone, X } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Check, CheckCircle2, Crown, CreditCard, MapPin, Phone, ShieldCheck, Sparkles, User, X, Zap } from 'lucide-react';
 import { SubscriptionTier, User as UserType, UserRole } from '../types';
 import { api } from '../services/api';
 
@@ -10,23 +10,57 @@ interface SubscriptionProps {
   onRequireLogin: () => void;
 }
 
+type Plan = {
+  id: SubscriptionTier;
+  name: string;
+  eyebrow: string;
+  price: string;
+  description: string;
+  features: string[];
+  highlight?: boolean;
+  icon: React.ReactElement;
+};
+
+const paymentMethods = [
+  { id: 'EDINAR', label: 'EDINAR' },
+  { id: 'FLOUCI', label: 'Flouci' },
+  { id: 'CARTE', label: 'Carte' }
+];
+
 const Subscription: React.FC<SubscriptionProps> = ({ user, onSubscribe, navigateTo, onRequireLogin }) => {
   const [selectedPlan, setSelectedPlan] = useState<SubscriptionTier | null>(null);
-  const [step, setStep] = useState(1); // 1: Select Plan, 2: Details
+  const [step, setStep] = useState(1);
   const [popup, setPopup] = useState<{ type: 'success' | 'error'; title: string; message: string } | null>(null);
-  
-  // Form State
   const [formData, setFormData] = useState({
-    fullName: '',
-    address: '',
-    phone: '',
-    paymentMethod: 'EDINAR'
+    fullName: user.fullName || '',
+    address: user.address || '',
+    phone: user.phone || '',
+    paymentMethod: user.paymentMethod || 'EDINAR'
   });
 
-  const plans = [
-    { id: SubscriptionTier.PRO, name: 'Pro Gamer', price: '19 TND', features: ['5% Réduction', 'Support Prio'], icon: <Zap /> },
-    { id: SubscriptionTier.ELITE, name: 'Elite VIP', price: '49 TND', features: ['10% Réduction', 'Support 24/7', 'Livraison Prio'], icon: <Crown /> }
+  const plans: Plan[] = [
+    {
+      id: SubscriptionTier.PRO,
+      name: 'Pro Gamer',
+      eyebrow: 'Pour les clients réguliers',
+      price: '19 TND',
+      description: 'Un abonnement simple pour réduire vos coûts et accélérer le support.',
+      features: ['5% de réduction sur les achats', 'Support prioritaire', 'Accès aux offres membres', 'Suivi client amélioré'],
+      icon: <Zap />
+    },
+    {
+      id: SubscriptionTier.ELITE,
+      name: 'Elite VIP',
+      eyebrow: 'Expérience premium',
+      price: '49 TND',
+      description: 'Le niveau le plus complet pour profiter du meilleur service sur la plateforme.',
+      features: ['10% de réduction sur les achats', 'Support 24/7', 'Livraison prioritaire', 'Traitement VIP des demandes'],
+      highlight: true,
+      icon: <Crown />
+    }
   ];
+
+  const selectedPlanDetails = plans.find((plan) => plan.id === selectedPlan);
 
   const handlePlanSelect = (tier: SubscriptionTier) => {
     if (user.role === UserRole.GUEST) return onRequireLogin();
@@ -37,26 +71,29 @@ const Subscription: React.FC<SubscriptionProps> = ({ user, onSubscribe, navigate
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedPlan) return;
+
     try {
-        await api.updateSubscription({
-            tier: selectedPlan,
-            ...formData
-        });
-        setPopup({
-            type: 'success',
-            title: 'Abonnement activé',
-            message: `Félicitations ! Vous êtes maintenant ${selectedPlan}.`
-        });
-        onSubscribe(selectedPlan);
-        window.setTimeout(() => navigateTo('home'), 1500);
+      await api.updateSubscription({
+        tier: selectedPlan,
+        ...formData
+      });
+      setPopup({
+        type: 'success',
+        title: 'Abonnement activé',
+        message: `Votre abonnement ${selectedPlan} est maintenant actif.`
+      });
+      onSubscribe(selectedPlan);
+      window.setTimeout(() => navigateTo('home'), 1500);
     } catch {
-        setPopup({
-            type: 'error',
-            title: 'Abonnement impossible',
-            message: "Erreur lors de l'abonnement."
-        });
+      setPopup({
+        type: 'error',
+        title: 'Abonnement impossible',
+        message: "Erreur lors de l'abonnement."
+      });
     }
   };
+
+  const inputClass = 'h-12 w-full rounded-xl border border-slate-200 bg-white px-4 pl-11 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-4 focus:ring-slate-900/5';
 
   const popupElement = popup && (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/35 p-4 backdrop-blur-sm animate-in fade-in duration-200">
@@ -91,55 +128,140 @@ const Subscription: React.FC<SubscriptionProps> = ({ user, onSubscribe, navigate
     </div>
   );
 
-  if (step === 2 && selectedPlan) {
+  if (step === 2 && selectedPlanDetails) {
     return (
       <>
         {popupElement}
-        <div className="max-w-2xl mx-auto py-12 px-4">
-            <button onClick={() => setStep(1)} className="mb-6 text-slate-500 hover:text-indigo-600">← Changer de plan</button>
-            <div className="bg-white p-8 rounded-2xl shadow-xl border border-slate-200">
-                <h2 className="text-2xl font-bold mb-6">Finaliser votre abonnement {selectedPlan}</h2>
-                <form onSubmit={handleSubmit} className="space-y-6">
-                    <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Nom Complet</label>
+        <div className="min-h-[82vh] bg-slate-50">
+          <div className="mx-auto max-w-6xl px-4 py-10 lg:py-14">
+            <button
+              type="button"
+              onClick={() => setStep(1)}
+              className="mb-6 inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-600 shadow-sm hover:border-slate-300 hover:text-slate-900"
+            >
+              <ArrowLeft size={17} />
+              Changer de plan
+            </button>
+
+            <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
+              <form onSubmit={handleSubmit} className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+                <div className="border-b border-slate-100 px-6 py-6 md:px-8">
+                  <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-slate-600">
+                    <ShieldCheck size={14} />
+                    Paiement sécurisé
+                  </div>
+                  <h1 className="mt-4 text-2xl font-black text-slate-950 md:text-3xl">Finaliser votre abonnement</h1>
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
+                    Vérifiez vos informations de facturation. Le bot WhatsApp sera activé plus tard selon l'action client définie.
+                  </p>
+                </div>
+
+                <div className="space-y-8 px-6 py-6 md:px-8">
+                  <section>
+                    <div className="mb-4 flex items-center justify-between gap-4">
+                      <h2 className="text-base font-black text-slate-900">Informations client</h2>
+                      <span className="text-xs font-bold text-slate-400">Étape 2 sur 2</span>
+                    </div>
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div>
+                        <label className="mb-1.5 block text-sm font-bold text-slate-700">Nom complet</label>
                         <div className="relative">
-                            <User className="absolute left-3 top-2.5 text-slate-400" size={18} />
-                            <input required type="text" className="w-full pl-10 p-2 border rounded-lg" value={formData.fullName} onChange={e => setFormData({...formData, fullName: e.target.value})} />
+                          <User className="absolute left-4 top-3.5 text-slate-400" size={18} />
+                          <input
+                            required
+                            type="text"
+                            className={inputClass}
+                            value={formData.fullName}
+                            onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
+                          />
                         </div>
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Adresse de Facturation</label>
+                      </div>
+                      <div>
+                        <label className="mb-1.5 block text-sm font-bold text-slate-700">Téléphone</label>
                         <div className="relative">
-                            <MapPin className="absolute left-3 top-2.5 text-slate-400" size={18} />
-                            <input required type="text" className="w-full pl-10 p-2 border rounded-lg" value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})} />
+                          <Phone className="absolute left-4 top-3.5 text-slate-400" size={18} />
+                          <input
+                            required
+                            type="tel"
+                            className={inputClass}
+                            value={formData.phone}
+                            onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                          />
                         </div>
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Téléphone</label>
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="mb-1.5 block text-sm font-bold text-slate-700">Adresse de facturation</label>
                         <div className="relative">
-                            <Phone className="absolute left-3 top-2.5 text-slate-400" size={18} />
-                            <input required type="tel" className="w-full pl-10 p-2 border rounded-lg" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} />
+                          <MapPin className="absolute left-4 top-3.5 text-slate-400" size={18} />
+                          <input
+                            required
+                            type="text"
+                            className={inputClass}
+                            value={formData.address}
+                            onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                          />
                         </div>
+                      </div>
                     </div>
-                    <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-3">Méthode de Paiement</label>
-                        <div className="grid grid-cols-3 gap-3">
-                            {['EDINAR', 'FLOUCI', 'CARTE'].map(method => (
-                                <div 
-                                    key={method}
-                                    onClick={() => setFormData({...formData, paymentMethod: method})}
-                                    className={`cursor-pointer border rounded-xl p-4 text-center font-bold text-sm ${formData.paymentMethod === method ? 'border-indigo-600 bg-indigo-50 text-indigo-600' : 'border-slate-200 hover:border-slate-300'}`}
-                                >
-                                    {method}
-                                </div>
-                            ))}
-                        </div>
+                  </section>
+
+                  <section>
+                    <h2 className="mb-4 text-base font-black text-slate-900">Méthode de paiement</h2>
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      {paymentMethods.map((method) => (
+                        <button
+                          type="button"
+                          key={method.id}
+                          onClick={() => setFormData({ ...formData, paymentMethod: method.id })}
+                          className={`flex h-14 items-center justify-center gap-2 rounded-xl border px-4 text-sm font-black transition ${
+                            formData.paymentMethod === method.id
+                              ? 'border-slate-950 bg-slate-950 text-white shadow-lg shadow-slate-950/15'
+                              : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+                          }`}
+                        >
+                          <CreditCard size={17} />
+                          {method.label}
+                        </button>
+                      ))}
                     </div>
-                    <button type="submit" className="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold text-lg hover:bg-indigo-700 transition">
-                        Confirmer et Payer
-                    </button>
-                </form>
+                  </section>
+                </div>
+
+                <div className="border-t border-slate-100 px-6 py-5 md:px-8">
+                  <button
+                    type="submit"
+                    className="flex h-14 w-full items-center justify-center rounded-xl bg-slate-950 px-5 py-4 text-base font-black text-white shadow-lg shadow-slate-950/20 transition hover:bg-indigo-600"
+                  >
+                    Confirmer et payer
+                  </button>
+                </div>
+              </form>
+
+              <aside className="h-fit rounded-2xl border border-slate-200 bg-slate-950 p-6 text-white shadow-xl shadow-slate-950/15">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <div className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">Plan sélectionné</div>
+                    <h2 className="mt-2 text-2xl font-black">{selectedPlanDetails.name}</h2>
+                  </div>
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10 text-white">
+                    {React.cloneElement(selectedPlanDetails.icon, { size: 24 })}
+                  </div>
+                </div>
+                <div className="mt-6 rounded-xl border border-white/10 bg-white/5 p-4">
+                  <div className="text-4xl font-black">{selectedPlanDetails.price}</div>
+                  <div className="mt-1 text-sm font-medium text-slate-400">par mois</div>
+                </div>
+                <ul className="mt-6 space-y-3">
+                  {selectedPlanDetails.features.map((feature) => (
+                    <li key={feature} className="flex items-start gap-3 text-sm leading-6 text-slate-200">
+                      <Check size={17} className="mt-1 shrink-0 text-emerald-400" />
+                      {feature}
+                    </li>
+                  ))}
+                </ul>
+              </aside>
             </div>
+          </div>
         </div>
       </>
     );
@@ -147,28 +269,69 @@ const Subscription: React.FC<SubscriptionProps> = ({ user, onSubscribe, navigate
 
   return (
     <>
-    {popupElement}
-    <div className="py-12 max-w-6xl mx-auto px-4">
-      <div className="text-center max-w-3xl mx-auto mb-16">
-        <h1 className="text-4xl font-bold text-slate-900 mb-4">Upgradez votre Expérience</h1>
-        <p className="text-lg text-slate-500">Choisissez le plan qui correspond à votre style de jeu.</p>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
-        {plans.map((plan) => (
-            <div key={plan.id} className="bg-white border hover:border-indigo-500 transition-all rounded-2xl p-8 shadow-sm hover:shadow-xl relative overflow-hidden group">
-                <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity transform group-hover:scale-110">
-                    {React.cloneElement(plan.icon as React.ReactElement<{ size: number }>, { size: 100 })}
-                </div>
-                <h3 className="text-2xl font-bold mb-2">{plan.name}</h3>
-                <div className="text-4xl font-black mb-6">{plan.price} <span className="text-sm font-normal text-slate-500">/ mois</span></div>
-                <ul className="space-y-3 mb-8">
-                    {plan.features.map((f, i) => <li key={i} className="flex items-center"><Check size={18} className="text-green-500 mr-2" /> {f}</li>)}
-                </ul>
-                <button onClick={() => handlePlanSelect(plan.id)} className="w-full bg-slate-900 text-white py-3 rounded-lg font-bold hover:bg-indigo-600 transition">Choisir ce plan</button>
+      {popupElement}
+      <div className="min-h-[82vh] bg-slate-50">
+        <div className="mx-auto max-w-6xl px-4 py-12 lg:py-16">
+          <div className="mx-auto max-w-3xl text-center">
+            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-black uppercase tracking-[0.18em] text-slate-600 shadow-sm">
+              <Sparkles size={15} className="text-indigo-600" />
+              Abonnements premium
             </div>
-        ))}
+            <h1 className="mt-6 text-4xl font-black tracking-tight text-slate-950 md:text-5xl">
+              Upgradez votre expérience TuniBots
+            </h1>
+            <p className="mx-auto mt-4 max-w-2xl text-base leading-7 text-slate-500">
+              Choisissez un plan clair, profitez d'avantages immédiats, et gardez une expérience de paiement simple et professionnelle.
+            </p>
+          </div>
+
+          <div className="mt-10 grid gap-6 lg:grid-cols-2">
+            {plans.map((plan) => (
+              <div
+                key={plan.id}
+                className={`relative overflow-hidden rounded-2xl border bg-white p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-xl md:p-8 ${
+                  plan.highlight ? 'border-slate-950 ring-4 ring-slate-950/5' : 'border-slate-200'
+                }`}
+              >
+                {plan.highlight && (
+                  <div className="absolute right-5 top-5 rounded-full bg-slate-950 px-3 py-1 text-xs font-black uppercase tracking-[0.14em] text-white">
+                    Recommandé
+                  </div>
+                )}
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-950 text-white">
+                  {React.cloneElement(plan.icon, { size: 24 })}
+                </div>
+                <div className="mt-6 text-xs font-black uppercase tracking-[0.18em] text-slate-400">{plan.eyebrow}</div>
+                <h2 className="mt-2 text-3xl font-black text-slate-950">{plan.name}</h2>
+                <p className="mt-3 min-h-[52px] text-sm leading-6 text-slate-500">{plan.description}</p>
+                <div className="mt-6 flex items-end gap-2">
+                  <span className="text-5xl font-black tracking-tight text-slate-950">{plan.price}</span>
+                  <span className="pb-2 text-sm font-bold text-slate-400">/ mois</span>
+                </div>
+                <ul className="mt-7 space-y-3">
+                  {plan.features.map((feature) => (
+                    <li key={feature} className="flex items-start gap-3 text-sm font-medium leading-6 text-slate-700">
+                      <Check size={18} className="mt-1 shrink-0 text-emerald-500" />
+                      {feature}
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  type="button"
+                  onClick={() => handlePlanSelect(plan.id)}
+                  className={`mt-8 flex h-12 w-full items-center justify-center rounded-xl text-sm font-black transition ${
+                    plan.highlight
+                      ? 'bg-slate-950 text-white shadow-lg shadow-slate-950/20 hover:bg-indigo-600'
+                      : 'border border-slate-200 bg-white text-slate-900 hover:border-slate-950 hover:bg-slate-950 hover:text-white'
+                  }`}
+                >
+                  Choisir ce plan
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
-    </div>
     </>
   );
 };

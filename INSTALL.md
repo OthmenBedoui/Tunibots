@@ -1,4 +1,4 @@
-# Tunidex - Installation rapide
+# TuniBots - Installation rapide
 
 ## Prerequis
 

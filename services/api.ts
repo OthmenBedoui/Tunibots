@@ -88,6 +88,11 @@ export const api = {
   removeFromCart: (itemId: string) => fetchWithFallback(`${API_URL}/cart/${itemId}`, { method: 'DELETE', headers: getHeaders() }),
   checkout: (data?: { paymentMethod?: string; phone?: string }) => fetchWithFallback<Order>(`${API_URL}/checkout`, { method: 'POST', headers: getHeaders(), body: JSON.stringify(data || {}) }),
   guestCheckout: (data: GuestCheckoutPayload) => fetchWithFallback<Order>(`${API_URL}/checkout/guest`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
+  confirmCheckout: (data: GuestCheckoutPayload | (Partial<GuestCheckoutPayload> & { phone?: string }), idempotencyKey: string) => fetchWithFallback<Order>(`${API_URL}/checkout/confirm`, {
+    method: 'POST',
+    headers: { ...getHeaders(), 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify({ ...data, idempotencyKey })
+  }),
 
   // Categories
   getCategories: () => fetchWithFallback<Category[]>(`${API_URL}/categories`, undefined, []),
@@ -108,8 +113,24 @@ export const api = {
   // Orders
   getMyOrders: () => fetchWithFallback<Order[]>(`${API_URL}/orders/my`, { headers: getHeaders() }, []),
   getAllOrders: () => fetchWithFallback<Order[]>(`${API_URL}/orders/admin`, { headers: getHeaders() }, []),
+  trackOrder: (orderNumber: string, params?: { token?: string; email?: string }) => {
+    const query = new URLSearchParams();
+    if (params?.token) query.set('token', params.token);
+    if (params?.email) query.set('email', params.email);
+    return fetchWithFallback<Order>(`${API_URL}/orders/${encodeURIComponent(orderNumber)}/track${query.toString() ? `?${query}` : ''}`, { headers: getHeaders() });
+  },
+  getOrderDelivery: (orderNumber: string, token?: string) => {
+    const query = token ? `?token=${encodeURIComponent(token)}` : '';
+    return fetchWithFallback<{ orderNumber: string; deliveries: Array<{ id: string; deliveryContent: string; deliveryType: string; activationGuide?: string; restrictions?: string; region?: string }> }>(`${API_URL}/orders/${encodeURIComponent(orderNumber)}/delivery${query}`, { headers: getHeaders() });
+  },
   updateOrderStatus: (orderId: string, status: OrderStatus) => fetchWithFallback(`${API_URL}/orders/${orderId}/status`, { method: 'PATCH', headers: getHeaders(), body: JSON.stringify({status}) }),
   resendOrderInvoiceEmail: (orderId: string) => fetchWithFallback<Order>(`${API_URL}/orders/${orderId}/email/resend`, { method: 'POST', headers: getHeaders() }),
+  approveOrderPayment: (orderId: string) => fetchWithFallback<Order>(`${API_URL}/admin/orders/${orderId}/payment/approve`, { method: 'POST', headers: getHeaders() }),
+  rejectOrderPayment: (orderId: string, reason: string) => fetchWithFallback<Order>(`${API_URL}/admin/orders/${orderId}/payment/reject`, { method: 'POST', headers: getHeaders(), body: JSON.stringify({ reason }) }),
+  createOrderDelivery: (orderId: string, data: { orderItemId?: string; deliveryType: string; deliveryContent: string; activationGuide?: string; restrictions?: string; region?: string }) =>
+    fetchWithFallback<Order>(`${API_URL}/admin/orders/${orderId}/delivery`, { method: 'POST', headers: getHeaders(), body: JSON.stringify(data) }),
+  sendOrderDelivery: (orderId: string) => fetchWithFallback<Order>(`${API_URL}/admin/orders/${orderId}/delivery/send`, { method: 'POST', headers: getHeaders() }),
+  resendOrderDeliveryEmail: (orderId: string) => fetchWithFallback<Order>(`${API_URL}/admin/orders/${orderId}/emails/resend-delivery`, { method: 'POST', headers: getHeaders() }),
   
   // Admin Users
   getAllUsers: () => fetchWithFallback<User[]>(`${API_URL}/users`, { headers: getHeaders() }, []),

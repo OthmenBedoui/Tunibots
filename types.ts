@@ -13,13 +13,35 @@ export enum SubscriptionTier {
 }
 
 export enum OrderStatus {
+  DRAFT_CART = 'DRAFT_CART',
   IN_PROGRESS = 'IN_PROGRESS',
   DELIVERED = 'DELIVERED',
   REGISTERED = 'REGISTERED',
   PENDING_PAYMENT = 'PENDING_PAYMENT',
+  PAYMENT_UNDER_REVIEW = 'PAYMENT_UNDER_REVIEW',
+  PAYMENT_APPROVED = 'PAYMENT_APPROVED',
+  PAYMENT_REJECTED = 'PAYMENT_REJECTED',
+  IN_DELIVERY = 'IN_DELIVERY',
   PAYMENT_RECEIVED = 'PAYMENT_RECEIVED',
   COMPLETED = 'COMPLETED',
-  CANCELLED = 'CANCELLED'
+  CANCELLED = 'CANCELLED',
+  REFUNDED = 'REFUNDED'
+}
+
+export enum PaymentStatus {
+  PENDING = 'PENDING',
+  SUBMITTED = 'SUBMITTED',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+  EXPIRED = 'EXPIRED'
+}
+
+export enum DeliveryStatus {
+  LOCKED = 'LOCKED',
+  READY = 'READY',
+  SENT = 'SENT',
+  VIEWED = 'VIEWED',
+  RESENT = 'RESENT'
 }
 
 export enum ProductType {
@@ -339,9 +361,55 @@ export interface OrderItem {
   quantity: number;
   priceSnapshot: number;
   titleSnapshot: string;
+  productSnapshotImage?: string;
   variantId?: string;
   variantSnapshot?: string;
+  deliveryType?: string;
+  status?: string;
   deliveredContent?: string; // The login/pass or key delivered to the customer
+}
+
+export interface Payment {
+  id: string;
+  orderId: string;
+  method: string;
+  status: PaymentStatus;
+  amount: number;
+  currency: string;
+  customerReference?: string | null;
+  proofFileUrl?: string | null;
+  submittedAt?: string;
+  approvedAt?: string | null;
+  rejectedAt?: string | null;
+  reviewedBy?: string | null;
+  rejectionReason?: string | null;
+}
+
+export interface Delivery {
+  id: string;
+  orderId: string;
+  orderItemId?: string | null;
+  status: DeliveryStatus;
+  deliveryType: string;
+  activationGuide?: string | null;
+  restrictions?: string | null;
+  region?: string | null;
+  sentAt?: string | null;
+  sentBy?: string | null;
+  viewedAt?: string | null;
+  resendCount?: number;
+}
+
+export interface OrderActionLog {
+  id: string;
+  orderId: string;
+  actorType: 'GUEST' | 'USER' | 'ADMIN' | 'AGENT' | 'SYSTEM';
+  actorId?: string | null;
+  action: string;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  metadata?: Record<string, unknown> | null;
+  createdAt: string;
 }
 
 export interface InvoiceItem {
@@ -364,11 +432,19 @@ export interface Invoice {
 }
 
 export interface GuestCheckoutPayload {
-  firstName: string;
-  lastName: string;
+  firstName?: string;
+  lastName?: string;
   email: string;
   phone: string;
   paymentMethod?: string;
+  customerReference?: string;
+  paymentProof?: {
+    fileName: string;
+    mimeType: string;
+    size: number;
+    dataUrl: string;
+  } | null;
+  idempotencyKey?: string;
   items: Array<{
     listingId: string;
     variantId?: string;
@@ -385,7 +461,14 @@ export interface Order {
   items: OrderItem[];
   status: OrderStatus;
   amount: number;
+  subtotal?: number;
+  discount?: number;
+  total?: number;
   currency?: string;
+  customerType?: 'USER' | 'GUEST';
+  guestEmail?: string | null;
+  guestPhone?: string | null;
+  trackingToken?: string | null;
   customerFirstName?: string;
   customerLastName?: string;
   customerEmail?: string;
@@ -394,6 +477,9 @@ export interface Order {
   emailStatus?: string;
   emailError?: string | null;
   invoice?: Invoice | null;
+  payments?: Payment[];
+  deliveries?: Delivery[];
+  actionLogs?: OrderActionLog[];
   createdAt: string;
   updatedAt: string;
 }

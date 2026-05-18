@@ -6,7 +6,8 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import ExcelJS from 'exceljs';
 import { DEFAULT_EMAIL_TEMPLATES, getEmailTemplate, renderTemplate, sendEmail } from '../utils/email.js';
-import { resendOrderConfirmationEmail } from '../services/orderEmailService.js';
+import { resendOrderConfirmationEmail, sendDeliveryEmail, sendPaymentApprovedEmail } from '../services/orderEmailService.js';
+import { encryptDeliveryContent, decryptDeliveryContent } from '../services/deliverySecurityService.js';
 
 const SITE_CONFIG_KEY = 'site';
 const legacySiteConfigPath = path.join(process.cwd(), 'server', 'data', 'site-config.json');
@@ -346,7 +347,7 @@ export const sendTestEmail = async (req: Request, res: Response) => {
     res.json({ success: true, message: 'Email de test envoyé.', messageId: sent.messageId });
 };
 
-export const resendOrderInvoiceEmail = async (req: Request, res: Response) => {
+export const resendOrderInvoiceEmail = async (req: Request & { user?: { id?: string; role?: string } }, res: Response) => {
     const result = await resendOrderConfirmationEmail(req.params.id);
     const order = await prisma.order.findUnique({
         where: { id: req.params.id },
@@ -365,6 +366,9 @@ export const resendOrderInvoiceEmail = async (req: Request, res: Response) => {
     });
 
     if (!order) return res.status(404).json({ error: 'Commande introuvable.' });
+    await prisma.orderActionLog.create({
+        data: { orderId: order.id, ...getActor(req), action: 'EMAIL_RESENT', ...requestMeta(req), metadata: { type: 'invoice', status: result.status } }
+    });
     res.json({ ...order, emailStatus: result.status, emailError: result.error });
 };
 
@@ -402,6 +406,24 @@ const sanitizeUser = <T extends { password?: string }>(user: T) => {
     return result;
 };
 
+const requestMeta = (req: Request) => ({
+    ipAddress: (req.headers['x-forwarded-for']?.toString().split(',')[0] || req.ip || req.socket.remoteAddress || '').trim(),
+    userAgent: req.headers['user-agent'] || ''
+});
+
+const getActor = (req: Request & { user?: { id?: string; role?: string } }) => ({
+    actorType: req.user?.role === 'ADMIN' ? 'ADMIN' : 'AGENT',
+    actorId: req.user?.id || null
+});
+
+const serializeAdminOrder = (order: any) => ({
+    ...order,
+    buyerId: order.userId || order.id,
+    buyer: order.user,
+    buyerDisplayName: `${order.customerFirstName} ${order.customerLastName}`.trim(),
+    deliveries: (order.deliveries || []).map(({ deliveryContentEncrypted, ...delivery }: any) => delivery)
+});
+
 export const updateUserRole = async (req: Request, res: Response) => {
     const user = await prisma.user.update({ where: { id: req.params.id }, data: { role: req.body.role } });
     if (!user) return res.status(404).json({ error: 'User not found' });
@@ -425,6 +447,9 @@ export const getAllOrders = async (_req: Request, res: Response) => {
         include: {
             items: true,
             invoice: true,
+            payments: true,
+            deliveries: true,
+            actionLogs: { orderBy: { createdAt: 'asc' } },
             user: {
                 select: {
                     id: true,
@@ -437,15 +462,10 @@ export const getAllOrders = async (_req: Request, res: Response) => {
         orderBy: { createdAt: 'desc' }
     });
 
-    res.json(orders.map((order) => ({
-        ...order,
-        buyerId: order.userId || order.id,
-        buyer: order.user,
-        buyerDisplayName: `${order.customerFirstName} ${order.customerLastName}`.trim()
-    })));
+    res.json(orders.map(serializeAdminOrder));
 };
 
-export const updateOrderStatus = async (req: Request, res: Response) => {
+export const updateOrderStatus = async (req: Request & { user?: { id?: string; role?: string } }, res: Response) => {
     const order = await prisma.order.update({
         where: { id: req.params.id },
         data: {
@@ -455,6 +475,9 @@ export const updateOrderStatus = async (req: Request, res: Response) => {
         include: {
             items: true,
             invoice: true,
+            payments: true,
+            deliveries: true,
+            actionLogs: { orderBy: { createdAt: 'asc' } },
             user: {
                 select: {
                     id: true,
@@ -466,12 +489,173 @@ export const updateOrderStatus = async (req: Request, res: Response) => {
         }
     });
 
-    res.json({
-        ...order,
-        buyerId: order.userId || order.id,
-        buyer: order.user,
-        buyerDisplayName: `${order.customerFirstName} ${order.customerLastName}`.trim()
+    await prisma.orderActionLog.create({
+        data: {
+            orderId: order.id,
+            ...getActor(req),
+            action: 'ORDER_STATUS_UPDATED',
+            ...requestMeta(req),
+            metadata: { status: req.body.status }
+        }
     });
+
+    res.json(serializeAdminOrder(order));
+};
+
+export const approveOrderPayment = async (req: Request & { user?: { id?: string; role?: string } }, res: Response) => {
+    const order = await prisma.order.update({
+        where: { id: req.params.id },
+        data: {
+            status: 'PAYMENT_APPROVED',
+            paymentConfirmedAt: new Date(),
+            payments: {
+                updateMany: {
+                    where: { status: { in: ['PENDING', 'SUBMITTED'] } },
+                    data: {
+                        status: 'APPROVED',
+                        approvedAt: new Date(),
+                        reviewedBy: req.user?.id || null,
+                        paidAt: new Date()
+                    }
+                }
+            },
+            invoice: { update: { status: 'PAID' } }
+        },
+        include: { items: true, invoice: true, payments: true, deliveries: true, actionLogs: { orderBy: { createdAt: 'asc' } }, user: { select: { id: true, username: true, email: true, avatarUrl: true } } }
+    });
+
+    await prisma.orderActionLog.create({
+        data: { orderId: order.id, ...getActor(req), action: 'PAYMENT_APPROVED', ...requestMeta(req), metadata: { reviewedBy: req.user?.id || null } }
+    });
+    await sendPaymentApprovedEmail(order);
+    res.json(serializeAdminOrder(order));
+};
+
+export const rejectOrderPayment = async (req: Request & { user?: { id?: string; role?: string } }, res: Response) => {
+    const reason = typeof req.body.reason === 'string' && req.body.reason.trim() ? req.body.reason.trim() : 'Paiement rejete.';
+    const order = await prisma.order.update({
+        where: { id: req.params.id },
+        data: {
+            status: 'PAYMENT_REJECTED',
+            payments: {
+                updateMany: {
+                    where: { status: { in: ['PENDING', 'SUBMITTED'] } },
+                    data: { status: 'REJECTED', rejectedAt: new Date(), reviewedBy: req.user?.id || null, rejectionReason: reason }
+                }
+            },
+            invoice: { update: { status: 'PAYMENT_REJECTED' } }
+        },
+        include: { items: true, invoice: true, payments: true, deliveries: true, actionLogs: { orderBy: { createdAt: 'asc' } }, user: { select: { id: true, username: true, email: true, avatarUrl: true } } }
+    });
+
+    await prisma.orderActionLog.create({
+        data: { orderId: order.id, ...getActor(req), action: 'PAYMENT_REJECTED', ...requestMeta(req), metadata: { reason } }
+    });
+    res.json(serializeAdminOrder(order));
+};
+
+export const createOrderDelivery = async (req: Request & { user?: { id?: string; role?: string } }, res: Response) => {
+    const content = typeof req.body.deliveryContent === 'string' ? req.body.deliveryContent.trim() : '';
+    if (!content) return res.status(400).json({ error: 'Le contenu de livraison est obligatoire.' });
+
+    const order = await prisma.order.findUnique({ where: { id: req.params.id }, include: { payments: true } });
+    if (!order) return res.status(404).json({ error: 'Commande introuvable.' });
+    if (!order.payments.some((payment) => payment.status === 'APPROVED')) {
+        return res.status(400).json({ error: 'Le paiement doit etre approuve avant de preparer la livraison.' });
+    }
+
+    const delivery = await prisma.delivery.create({
+        data: {
+            orderId: order.id,
+            orderItemId: req.body.orderItemId || null,
+            status: 'READY',
+            deliveryContentEncrypted: encryptDeliveryContent(content),
+            deliveryType: req.body.deliveryType || 'MIXED',
+            activationGuide: req.body.activationGuide || null,
+            restrictions: req.body.restrictions || null,
+            region: req.body.region || null
+        }
+    });
+
+    await prisma.order.update({ where: { id: order.id }, data: { status: 'IN_DELIVERY' } });
+    await prisma.orderActionLog.create({
+        data: { orderId: order.id, ...getActor(req), action: 'DELIVERY_CREATED', ...requestMeta(req), metadata: { deliveryId: delivery.id, orderItemId: req.body.orderItemId || null } }
+    });
+
+    const updated = await prisma.order.findUniqueOrThrow({
+        where: { id: order.id },
+        include: { items: true, invoice: true, payments: true, deliveries: true, actionLogs: { orderBy: { createdAt: 'asc' } }, user: { select: { id: true, username: true, email: true, avatarUrl: true } } }
+    });
+    res.status(201).json(serializeAdminOrder(updated));
+};
+
+export const sendOrderDelivery = async (req: Request & { user?: { id?: string; role?: string } }, res: Response) => {
+    const order = await prisma.order.findUnique({
+        where: { id: req.params.id },
+        include: { items: true, invoice: true, payments: true, deliveries: true, actionLogs: { orderBy: { createdAt: 'asc' } }, user: { select: { id: true, username: true, email: true, avatarUrl: true } } }
+    });
+    if (!order) return res.status(404).json({ error: 'Commande introuvable.' });
+    if (!order.payments.some((payment) => payment.status === 'APPROVED')) return res.status(400).json({ error: 'Paiement non approuve.' });
+    if (!order.deliveries.some((delivery) => delivery.status === 'READY' || delivery.status === 'LOCKED')) return res.status(400).json({ error: 'Aucun contenu de livraison pret.' });
+
+    await prisma.delivery.updateMany({
+        where: { orderId: order.id, status: { in: ['READY', 'LOCKED'] } },
+        data: { status: 'SENT', sentAt: new Date(), sentBy: req.user?.id || null }
+    });
+    const updated = await prisma.order.update({
+        where: { id: order.id },
+        data: { status: 'DELIVERED' },
+        include: { items: true, invoice: true, payments: true, deliveries: true, actionLogs: { orderBy: { createdAt: 'asc' } }, user: { select: { id: true, username: true, email: true, avatarUrl: true } } }
+    });
+
+    await prisma.orderActionLog.create({
+        data: { orderId: order.id, ...getActor(req), action: 'DELIVERY_SENT', ...requestMeta(req), metadata: { deliveryCount: updated.deliveries.length } }
+    });
+
+    await sendDeliveryEmail({
+        ...updated,
+        deliveries: updated.deliveries.map((delivery) => ({
+            deliveryType: delivery.deliveryType,
+            deliveryContent: decryptDeliveryContent(delivery.deliveryContentEncrypted),
+            activationGuide: delivery.activationGuide,
+            restrictions: delivery.restrictions,
+            region: delivery.region
+        }))
+    });
+    res.json(serializeAdminOrder(updated));
+};
+
+export const resendOrderDeliveryEmail = async (req: Request & { user?: { id?: string; role?: string } }, res: Response) => {
+    const order = await prisma.order.findUnique({
+        where: { id: req.params.id },
+        include: { items: true, invoice: true, payments: true, deliveries: true, user: { select: { id: true, username: true, email: true, avatarUrl: true } } }
+    });
+    if (!order) return res.status(404).json({ error: 'Commande introuvable.' });
+    const sentDeliveries = order.deliveries.filter((delivery) => delivery.status === 'SENT' || delivery.status === 'VIEWED');
+    if (sentDeliveries.length === 0) return res.status(400).json({ error: 'Aucune livraison envoyee a renvoyer.' });
+
+    if (sentDeliveries.some((delivery) => delivery.resendCount >= 3)) return res.status(429).json({ error: 'Limite de renvoi email atteinte pour cette commande.' });
+
+    await sendDeliveryEmail({
+        ...order,
+        deliveries: sentDeliveries.map((delivery) => ({
+            deliveryType: delivery.deliveryType,
+            deliveryContent: decryptDeliveryContent(delivery.deliveryContentEncrypted),
+            activationGuide: delivery.activationGuide,
+            restrictions: delivery.restrictions,
+            region: delivery.region
+        }))
+    });
+    await prisma.delivery.updateMany({ where: { orderId: order.id, id: { in: sentDeliveries.map((delivery) => delivery.id) } }, data: { resendCount: { increment: 1 } } });
+    await prisma.orderActionLog.create({
+        data: { orderId: order.id, ...getActor(req), action: 'EMAIL_RESENT', ...requestMeta(req), metadata: { type: 'delivery' } }
+    });
+
+    const updated = await prisma.order.findUniqueOrThrow({
+        where: { id: order.id },
+        include: { items: true, invoice: true, payments: true, deliveries: true, actionLogs: { orderBy: { createdAt: 'asc' } }, user: { select: { id: true, username: true, email: true, avatarUrl: true } } }
+    });
+    res.json(serializeAdminOrder(updated));
 };
 
 const variantString = (variants: Array<{ name: string; price: number; order: number }>) =>

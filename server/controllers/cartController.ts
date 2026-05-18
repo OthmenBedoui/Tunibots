@@ -1,9 +1,11 @@
 
 import { Request, Response } from 'express';
+import crypto from 'crypto';
 import prisma from '../prisma.js';
 import { clearUserCart, createCheckoutOrder } from '../services/checkoutService.js';
 import { sendOrderConfirmationEmail } from '../services/orderEmailService.js';
 import { notifyNewOrder } from '../services/orderNotificationService.js';
+import { decryptDeliveryContent } from '../services/deliverySecurityService.js';
 
 interface AuthRequest extends Request {
   user?: {
@@ -32,6 +34,9 @@ const serializeOrder = <T extends {
         issueDate: Date;
         totalAmount: number;
     } | null;
+    payments?: Array<Record<string, unknown>>;
+    deliveries?: Array<Record<string, unknown>>;
+    actionLogs?: Array<Record<string, unknown>>;
     [key: string]: unknown;
 }>(order: T) => {
     const buyerName = [order.customerFirstName, order.customerLastName].filter(Boolean).join(' ').trim();
@@ -40,9 +45,18 @@ const serializeOrder = <T extends {
         buyerId: order.userId || order.id,
         buyer: order.user || null,
         buyerDisplayName: buyerName,
-        invoice: order.invoice || null
+        invoice: order.invoice || null,
+        deliveries: (order.deliveries || []).map(({ deliveryContentEncrypted, ...delivery }) => delivery),
+        actionLogs: order.actionLogs || []
     };
 };
+
+const requestMeta = (req: Request) => ({
+    ipAddress: (req.headers['x-forwarded-for']?.toString().split(',')[0] || req.ip || req.socket.remoteAddress || '').trim(),
+    userAgent: req.headers['user-agent'] || ''
+});
+
+const hashToken = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
 
 /**
  * @swagger
@@ -180,9 +194,13 @@ export const checkout = async (req: AuthRequest, res: Response) => {
             email: user.email,
             phone: user.phone || req.body.phone || '+216',
             paymentMethod: req.body.paymentMethod,
+            customerReference: req.body.customerReference,
+            paymentProof: req.body.paymentProof,
+            idempotencyKey: req.body.idempotencyKey || req.headers['idempotency-key']?.toString(),
             items: cart.items.map((item) => ({ listingId: item.listingId, variantId: item.variantId || undefined, quantity: item.quantity })),
             userId: user.id,
-            source: 'AUTHENTICATED'
+            source: 'AUTHENTICATED',
+            ...requestMeta(req)
         });
 
         await clearUserCart(user.id);
@@ -202,9 +220,51 @@ export const guestCheckout = async (req: Request, res: Response) => {
             email: req.body.email,
             phone: req.body.phone,
             paymentMethod: req.body.paymentMethod,
-            items: req.body.items
+            customerReference: req.body.customerReference,
+            paymentProof: req.body.paymentProof,
+            idempotencyKey: req.body.idempotencyKey || req.headers['idempotency-key']?.toString(),
+            items: req.body.items,
+            ...requestMeta(req)
         });
 
+        await notifyNewOrder(order);
+        const emailResult = await sendOrderConfirmationEmail(order);
+        res.status(201).json(serializeOrder({ ...order, emailStatus: emailResult.status, emailError: emailResult.error }));
+    } catch (error) {
+        res.status(400).json({ error: error instanceof Error ? error.message : 'Impossible de créer la commande.' });
+    }
+};
+
+export const confirmCheckout = async (req: AuthRequest, res: Response) => {
+    try {
+        const isAuthenticated = Boolean(req.user?.id);
+        let user: Awaited<ReturnType<typeof prisma.user.findUnique>> | null = null;
+        let items = req.body.items;
+
+        if (isAuthenticated) {
+            user = await prisma.user.findUnique({ where: { id: req.user?.id } });
+            if (!user) return res.status(404).json({ error: 'Utilisateur introuvable.' });
+            const cart = await prisma.cart.findUnique({ where: { userId: user.id }, include: { items: true } });
+            if (!cart || cart.items.length === 0) return res.status(400).json({ error: 'Votre panier est vide.' });
+            items = cart.items.map((item) => ({ listingId: item.listingId, variantId: item.variantId || undefined, quantity: item.quantity }));
+        }
+
+        const order = await createCheckoutOrder({
+            firstName: req.body.firstName || user?.fullName?.split(' ')[0] || user?.username,
+            lastName: req.body.lastName || user?.fullName?.split(' ').slice(1).join(' ') || user?.username,
+            email: req.body.email || user?.email || '',
+            phone: req.body.phone || user?.phone || '',
+            paymentMethod: req.body.paymentMethod,
+            customerReference: req.body.customerReference,
+            paymentProof: req.body.paymentProof,
+            idempotencyKey: req.body.idempotencyKey || req.headers['idempotency-key']?.toString(),
+            items,
+            userId: user?.id,
+            source: user ? 'AUTHENTICATED' : 'GUEST',
+            ...requestMeta(req)
+        });
+
+        if (user) await clearUserCart(user.id);
         await notifyNewOrder(order);
         const emailResult = await sendOrderConfirmationEmail(order);
         res.status(201).json(serializeOrder({ ...order, emailStatus: emailResult.status, emailError: emailResult.error }));
@@ -237,6 +297,9 @@ export const getMyOrders = async (req: AuthRequest, res: Response) => {
         include: {
             items: true,
             invoice: true,
+            payments: true,
+            deliveries: true,
+            actionLogs: { orderBy: { createdAt: 'asc' } },
             user: {
                 select: {
                     id: true,
@@ -249,4 +312,86 @@ export const getMyOrders = async (req: AuthRequest, res: Response) => {
         orderBy: { createdAt: 'desc' }
     });
     res.json(orders.map((order) => serializeOrder(order)));
+};
+
+export const trackOrder = async (req: AuthRequest, res: Response) => {
+    const orderNumber = req.params.orderNumber;
+    const token = req.query.token?.toString();
+    const email = req.query.email?.toString().trim().toLowerCase();
+
+    const order = await prisma.order.findUnique({
+        where: { orderNumber },
+        include: {
+            items: true,
+            invoice: true,
+            payments: true,
+            deliveries: true,
+            actionLogs: { orderBy: { createdAt: 'asc' } },
+            user: { select: { id: true, username: true, email: true, avatarUrl: true } }
+        }
+    });
+    if (!order) return res.status(404).json({ error: 'Commande introuvable.' });
+
+    const ownerAllowed = req.user?.id && order.userId === req.user.id;
+    const tokenAllowed = token && order.trackingTokenHash && hashToken(token) === order.trackingTokenHash;
+    const emailAllowed = email && email === order.customerEmail.toLowerCase();
+    if (!ownerAllowed && !tokenAllowed && !emailAllowed) {
+        return res.status(403).json({ error: 'Verification requise pour consulter cette commande.' });
+    }
+
+    res.json(serializeOrder(order));
+};
+
+export const getOrderDelivery = async (req: AuthRequest, res: Response) => {
+    const orderNumber = req.params.orderNumber;
+    const token = req.query.token?.toString();
+    const order = await prisma.order.findUnique({
+        where: { orderNumber },
+        include: {
+            items: true,
+            payments: true,
+            deliveries: true
+        }
+    });
+    if (!order) return res.status(404).json({ error: 'Commande introuvable.' });
+
+    const ownerAllowed = req.user?.id && order.userId === req.user.id;
+    const tokenAllowed = token && order.trackingTokenHash && hashToken(token) === order.trackingTokenHash;
+    const paymentApproved = order.payments.some((payment) => payment.status === 'APPROVED');
+    const canView = paymentApproved && order.status === 'DELIVERED' && order.deliveries.some((delivery) => delivery.status === 'SENT') && (ownerAllowed || tokenAllowed);
+
+    if (!canView) return res.status(403).json({ error: 'La livraison est verrouillee jusqu’a validation et envoi.' });
+
+    await prisma.delivery.updateMany({
+        where: { orderId: order.id, status: 'SENT', viewedAt: null },
+        data: { status: 'VIEWED', viewedAt: new Date() }
+    });
+    await prisma.orderActionLog.create({
+        data: {
+            orderId: order.id,
+            actorType: ownerAllowed ? 'USER' : 'GUEST',
+            actorId: ownerAllowed ? req.user?.id : null,
+            action: 'DELIVERY_VIEWED',
+            ...requestMeta(req),
+            metadata: { orderNumber }
+        }
+    });
+
+    res.json({
+        orderNumber: order.orderNumber,
+        deliveries: order.deliveries
+            .filter((delivery) => delivery.status === 'SENT' || delivery.status === 'VIEWED')
+            .map((delivery) => ({
+                id: delivery.id,
+                orderItemId: delivery.orderItemId,
+                status: delivery.status,
+                deliveryType: delivery.deliveryType,
+                deliveryContent: decryptDeliveryContent(delivery.deliveryContentEncrypted),
+                activationGuide: delivery.activationGuide,
+                restrictions: delivery.restrictions,
+                region: delivery.region,
+                sentAt: delivery.sentAt,
+                viewedAt: delivery.viewedAt
+            }))
+    });
 };

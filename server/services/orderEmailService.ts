@@ -25,6 +25,16 @@ type CheckoutOrderEmailPayload = {
   } | null;
 };
 
+type DeliveryEmailPayload = CheckoutOrderEmailPayload & {
+  deliveries?: Array<{
+    deliveryType: string;
+    deliveryContent: string;
+    activationGuide?: string | null;
+    restrictions?: string | null;
+    region?: string | null;
+  }>;
+};
+
 const escapeHtml = (value: string) =>
   value
     .replace(/&/g, '&amp;')
@@ -288,4 +298,58 @@ export const resendOrderConfirmationEmail = async (orderId: string) => {
   }
 
   return sendOrderConfirmationEmail(order);
+};
+
+export const sendPaymentApprovedEmail = async (order: CheckoutOrderEmailPayload) => {
+  try {
+    await sendEmail(
+      order.customerEmail,
+      `Paiement approuve - ${order.orderNumber}`,
+      `
+        <div style="font-family:Arial,Helvetica,sans-serif;color:#0f172a">
+          <h1>Paiement approuve</h1>
+          <p>Votre paiement pour la commande <strong>${escapeHtml(order.orderNumber)}</strong> a ete valide.</p>
+          <p>Statut livraison: <strong>En preparation</strong>.</p>
+          <h2>Facture</h2>
+          <p>Total: <strong>${formatMoney(order.amount, order.currency)}</strong></p>
+          <ul>${order.items.map((item) => `<li>${escapeHtml(item.titleSnapshot)} x${item.quantity} - ${formatMoney(item.priceSnapshot * item.quantity, order.currency)}</li>`).join('')}</ul>
+        </div>
+      `,
+      { text: `Paiement approuve pour ${order.orderNumber}. Livraison en preparation.`, messageType: 'transactional' }
+    );
+    return { status: 'SENT', error: null };
+  } catch (error) {
+    return { status: 'FAILED', error: error instanceof Error ? error.message : 'SMTP send failed' };
+  }
+};
+
+export const sendDeliveryEmail = async (order: DeliveryEmailPayload) => {
+  try {
+    const deliveryRows = (order.deliveries || []).map((delivery) => `
+      <div style="border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin:12px 0">
+        <div style="font-size:12px;color:#64748b;text-transform:uppercase">${escapeHtml(delivery.deliveryType)}</div>
+        <pre style="white-space:pre-wrap;background:#f8fafc;border-radius:10px;padding:12px;color:#0f172a">${escapeHtml(delivery.deliveryContent)}</pre>
+        ${delivery.activationGuide ? `<p><strong>Activation:</strong> ${escapeHtml(delivery.activationGuide)}</p>` : ''}
+        ${delivery.restrictions ? `<p><strong>Restrictions:</strong> ${escapeHtml(delivery.restrictions)}</p>` : ''}
+        ${delivery.region ? `<p><strong>Region:</strong> ${escapeHtml(delivery.region)}</p>` : ''}
+      </div>
+    `).join('');
+
+    await sendEmail(
+      order.customerEmail,
+      `Livraison digitale - ${order.orderNumber}`,
+      `
+        <div style="font-family:Arial,Helvetica,sans-serif;color:#0f172a">
+          <h1>Votre commande est livree</h1>
+          <p>Commande <strong>${escapeHtml(order.orderNumber)}</strong></p>
+          ${deliveryRows}
+          <p>Besoin d'aide ? Repondez a cet email avec votre numero de commande.</p>
+        </div>
+      `,
+      { text: `Livraison digitale pour ${order.orderNumber}. Consultez cet email et votre espace Tunibots.`, messageType: 'transactional' }
+    );
+    return { status: 'SENT', error: null };
+  } catch (error) {
+    return { status: 'FAILED', error: error instanceof Error ? error.message : 'SMTP send failed' };
+  }
 };

@@ -1,3 +1,7 @@
+import crypto from 'crypto';
+import path from 'path';
+import { mkdir, writeFile } from 'fs/promises';
+import { Prisma } from '@prisma/client';
 import prisma from '../prisma.js';
 
 type CheckoutItemInput = {
@@ -6,15 +10,27 @@ type CheckoutItemInput = {
   quantity: number;
 };
 
+type PaymentProofInput = {
+  fileName: string;
+  mimeType: string;
+  size: number;
+  dataUrl: string;
+};
+
 export type GuestCheckoutInput = {
-  firstName: string;
-  lastName: string;
+  firstName?: string;
+  lastName?: string;
   email: string;
   phone: string;
   paymentMethod?: string;
+  customerReference?: string;
+  paymentProof?: PaymentProofInput | null;
+  idempotencyKey?: string;
   items: CheckoutItemInput[];
   userId?: string;
   source?: 'GUEST' | 'AUTHENTICATED';
+  ipAddress?: string;
+  userAgent?: string;
 };
 
 type CheckoutLine = {
@@ -25,7 +41,36 @@ type CheckoutLine = {
   unitPrice: number;
   lineTotal: number;
   titleSnapshot: string;
+  productSnapshotImage?: string | null;
+  deliveryType: string;
 };
+
+const activeCheckoutLocks = new Set<string>();
+const rateBuckets = new Map<string, number[]>();
+
+const ACTIVE_ORDER_STATUSES = [
+  'PENDING_PAYMENT',
+  'PAYMENT_UNDER_REVIEW',
+  'PAYMENT_APPROVED',
+  'IN_DELIVERY'
+];
+
+const PAYMENT_METHODS: Record<string, string> = {
+  whatsapp: 'WhatsApp',
+  edinar: 'EDINAR',
+  flouci: 'Flouci',
+  bank_transfer: 'Virement bancaire',
+  cash: 'Paiement cash'
+};
+
+const ALLOWED_PROOF_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
+const ALLOWED_PROOF_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.pdf']);
+const MAX_PROOF_SIZE_BYTES = 5 * 1024 * 1024;
+
+const normalizeText = (value?: string) => (value || '').trim().replace(/\s+/g, ' ');
+const normalizeEmail = (value?: string) => (value || '').trim().toLowerCase();
+const normalizePhone = (value?: string) => (value || '').trim().replace(/\s+/g, '');
+const sha256 = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
 
 const getListingFinalPrice = (listing: { price: number; discountType?: string | null; discountValue?: number | null; discountPercent?: number | null }) => {
   if (listing.discountType === 'PERCENT') {
@@ -40,53 +85,16 @@ const getListingFinalPrice = (listing: { price: number; discountType?: string | 
   return listing.price;
 };
 
-const normalizeText = (value: string) => value.trim().replace(/\s+/g, ' ');
-const normalizeEmail = (value: string) => value.trim().toLowerCase();
-const normalizePhone = (value: string) => value.trim().replace(/\s+/g, '');
-
-export const validateGuestCheckoutInput = (input: GuestCheckoutInput) => {
-  const firstName = normalizeText(input.firstName);
-  const lastName = normalizeText(input.lastName);
-  const email = normalizeEmail(input.email);
-  const phone = normalizePhone(input.phone);
-  const items = (input.items || [])
-    .filter((item) => item && typeof item.listingId === 'string')
-    .map((item) => ({
-      listingId: item.listingId.trim(),
-      variantId: typeof item.variantId === 'string' ? item.variantId.trim() : undefined,
-      quantity: Number(item.quantity || 0)
-    }))
-    .filter((item) => item.listingId && Number.isInteger(item.quantity) && item.quantity > 0);
-
-  if (!firstName || firstName.length < 2) {
-    throw new Error('Le prénom est obligatoire.');
-  }
-  if (!lastName || lastName.length < 2) {
-    throw new Error('Le nom est obligatoire.');
-  }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    throw new Error('Adresse email invalide.');
-  }
-  if (!/^[+\d][\d\s()-]{7,}$/.test(input.phone || '')) {
-    throw new Error('Numéro de téléphone invalide.');
-  }
-  if (items.length === 0) {
-    throw new Error('Votre panier est vide.');
-  }
-
-  return {
-    firstName,
-    lastName,
-    email,
-    phone,
-    paymentMethod: input.paymentMethod?.trim() || null,
-    items,
-    userId: input.userId,
-    source: input.source || 'GUEST'
-  };
+const consumeRateLimit = (key: string, maxAttempts: number, windowMs: number) => {
+  const now = Date.now();
+  const attempts = (rateBuckets.get(key) || []).filter((timestamp) => now - timestamp < windowMs);
+  if (attempts.length >= maxAttempts) return false;
+  attempts.push(now);
+  rateBuckets.set(key, attempts);
+  return true;
 };
 
-const nextSequenceValue = async (tx: typeof prisma, key: string) => {
+const nextSequenceValue = async (tx: Prisma.TransactionClient, key: string) => {
   await tx.sequence.upsert({
     where: { key },
     create: { key, value: 0 },
@@ -103,26 +111,39 @@ const nextSequenceValue = async (tx: typeof prisma, key: string) => {
 
 const formatDocumentNumber = (prefix: string, year: number, value: number) => `${prefix}-${year}-${String(value).padStart(6, '0')}`;
 
+const buildCartFingerprint = (items: CheckoutItemInput[]) =>
+  sha256(
+    items
+      .map((item) => `${item.listingId}:${item.variantId || ''}:${item.quantity}`)
+      .sort()
+      .join('|')
+  );
+
+const inferDeliveryType = (listing: { productType?: string | null; source?: string | null }) => {
+  if (listing.productType === 'KEY') return 'KEY';
+  if (listing.productType === 'LOGIN_CREDENTIALS') return 'ACCOUNT';
+  if (listing.source) return 'LINK';
+  return 'MIXED';
+};
+
 const buildCheckoutLines = async (items: CheckoutItemInput[]): Promise<CheckoutLine[]> => {
   const listingIds = [...new Set(items.map((item) => item.listingId))];
   const listings = await prisma.listing.findMany({
     where: { id: { in: listingIds }, isArchived: false },
     include: { variants: true }
   });
-
   const listingMap = new Map(listings.map((listing) => [listing.id, listing]));
 
   return items.map((item) => {
     const listing = listingMap.get(item.listingId);
-    if (!listing) {
-      throw new Error('Un ou plusieurs produits du panier sont introuvables.');
-    }
+    if (!listing) throw new Error('Un ou plusieurs produits du panier sont introuvables.');
+
     const variant = item.variantId ? listing.variants.find((entry) => entry.id === item.variantId) : null;
-    if (listing.variants.length > 0 && !variant) {
-      throw new Error('Une variante doit être sélectionnée pour un ou plusieurs produits.');
-    }
+    if (listing.variants.length > 0 && !variant) throw new Error('Une variante doit etre selectionnee pour un ou plusieurs produits.');
+
     const unitPrice = variant ? variant.price : getListingFinalPrice(listing);
     const variantSnapshot = variant?.name;
+
     return {
       listingId: listing.id,
       variantId: variant?.id,
@@ -130,106 +151,266 @@ const buildCheckoutLines = async (items: CheckoutItemInput[]): Promise<CheckoutL
       quantity: item.quantity,
       unitPrice,
       lineTotal: unitPrice * item.quantity,
-      titleSnapshot: variantSnapshot ? `${listing.title} - ${variantSnapshot}` : listing.title
+      titleSnapshot: variantSnapshot ? `${listing.title} - ${variantSnapshot}` : listing.title,
+      productSnapshotImage: listing.imageUrl,
+      deliveryType: inferDeliveryType(listing)
     };
   });
 };
 
-export const createCheckoutOrder = async (rawInput: GuestCheckoutInput) => {
-  const input = validateGuestCheckoutInput(rawInput);
-  const lines = await buildCheckoutLines(input.items);
-  const totalAmount = lines.reduce((sum, line) => sum + line.lineTotal, 0);
-  const now = new Date();
-  const year = now.getUTCFullYear();
+const validateProofUpload = async (proof?: PaymentProofInput | null) => {
+  if (!proof) return null;
+  const extension = path.extname(proof.fileName || '').toLowerCase();
+  if (!ALLOWED_PROOF_MIME_TYPES.has(proof.mimeType) || !ALLOWED_PROOF_EXTENSIONS.has(extension)) {
+    throw new Error('Preuve de paiement invalide. Formats acceptes: JPG, PNG, WEBP ou PDF.');
+  }
+  if (!Number.isFinite(proof.size) || proof.size <= 0 || proof.size > MAX_PROOF_SIZE_BYTES) {
+    throw new Error('La preuve de paiement ne doit pas depasser 5 Mo.');
+  }
 
-  const order = await prisma.$transaction(async (tx) => {
-    const orderSequence = await nextSequenceValue(tx, `ORDER-${year}`);
-    const invoiceSequence = await nextSequenceValue(tx, `INVOICE-${year}`);
-    const orderNumber = formatDocumentNumber('CMD', year, orderSequence);
-    const invoiceNumber = formatDocumentNumber('FAC', year, invoiceSequence);
+  const match = proof.dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (!match || match[1] !== proof.mimeType) {
+    throw new Error('Fichier de preuve invalide.');
+  }
 
-    const createdOrder = await tx.order.create({
-      data: {
-        orderNumber,
-        userId: input.userId,
-        status: 'IN_PROGRESS',
-        amount: totalAmount,
-        currency: 'TND',
-        source: input.source,
-        customerFirstName: input.firstName,
-        customerLastName: input.lastName,
-        customerEmail: input.email,
-        customerPhone: input.phone,
-        paymentMethod: input.paymentMethod,
-        items: {
-          create: lines.map((line) => ({
-            listingId: line.listingId,
-            variantId: line.variantId,
-            quantity: line.quantity,
-            priceSnapshot: line.unitPrice,
-            titleSnapshot: line.titleSnapshot,
-            variantSnapshot: line.variantSnapshot
-          }))
-        }
-      },
-      include: { items: true }
-    });
+  const buffer = Buffer.from(match[2], 'base64');
+  if (buffer.length > MAX_PROOF_SIZE_BYTES) throw new Error('La preuve de paiement ne doit pas depasser 5 Mo.');
 
-    const orderItemsByLineKey = new Map(createdOrder.items.map((item) => [`${item.listingId}:${item.variantId || ''}`, item]));
+  const safeName = `${crypto.randomUUID()}${extension}`;
+  const uploadDir = path.resolve(process.cwd(), 'server', 'uploads', 'payment-proofs');
+  await mkdir(uploadDir, { recursive: true });
+  await writeFile(path.join(uploadDir, safeName), buffer, { flag: 'wx' });
+  return `/secure-uploads/payment-proofs/${safeName}`;
+};
 
-    const invoice = await tx.invoice.create({
-      data: {
-        invoiceNumber,
-        orderId: createdOrder.id,
-        type: 'PROFORMA',
-        status: 'PENDING_PAYMENT',
-        currency: 'TND',
-        orderNumber,
-        customerFirstName: input.firstName,
-        customerLastName: input.lastName,
-        customerEmail: input.email,
-        customerPhone: input.phone,
-        totalAmount,
-        items: {
-          create: lines.map((line) => ({
-            orderItemId: orderItemsByLineKey.get(`${line.listingId}:${line.variantId || ''}`)?.id,
-            listingId: line.listingId,
-            variantSnapshot: line.variantSnapshot,
-            quantity: line.quantity,
-            unitPrice: line.unitPrice,
-            lineTotal: line.lineTotal,
-            titleSnapshot: line.titleSnapshot
-          }))
-        }
-      }
-    });
+export const validateGuestCheckoutInput = (input: GuestCheckoutInput) => {
+  const firstName = normalizeText(input.firstName) || 'Client';
+  const lastName = normalizeText(input.lastName) || 'Tunibots';
+  const email = normalizeEmail(input.email);
+  const phone = normalizePhone(input.phone);
+  const paymentMethod = normalizeText(input.paymentMethod) || 'whatsapp';
+  const customerReference = normalizeText(input.customerReference);
+  const idempotencyKey = normalizeText(input.idempotencyKey);
+  const items = (input.items || [])
+    .filter((item) => item && typeof item.listingId === 'string')
+    .map((item) => ({
+      listingId: item.listingId.trim(),
+      variantId: typeof item.variantId === 'string' ? item.variantId.trim() : undefined,
+      quantity: Number(item.quantity || 0)
+    }))
+    .filter((item) => item.listingId && Number.isInteger(item.quantity) && item.quantity > 0);
 
-    return tx.order.findUniqueOrThrow({
-      where: { id: createdOrder.id },
-      include: {
-        items: true,
-        invoice: { include: { items: true } },
-        user: {
-          select: {
-            id: true,
-            username: true,
-            email: true,
-            avatarUrl: true
-          }
-        }
-      }
-    });
-  });
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Adresse email invalide.');
+  if (!/^[+\d][\d\s()-]{7,}$/.test(input.phone || '')) throw new Error('Numero de telephone invalide.');
+  if (!PAYMENT_METHODS[paymentMethod] && paymentMethod.length > 32) throw new Error('Methode de paiement invalide.');
+  if (items.length === 0) throw new Error('Votre panier est vide.');
 
   return {
-    ...order,
-    buyerId: order.userId || order.id,
-    buyer: order.user
+    firstName,
+    lastName,
+    email,
+    phone,
+    paymentMethod,
+    customerReference,
+    idempotencyKey,
+    items,
+    userId: input.userId,
+    source: input.source || 'GUEST',
+    customerType: input.userId ? 'USER' : 'GUEST'
   };
+};
+
+export const createCheckoutOrder = async (rawInput: GuestCheckoutInput) => {
+  const input = validateGuestCheckoutInput(rawInput);
+  const cartFingerprint = buildCartFingerprint(input.items);
+  const lockKey = `${input.userId || `${input.email}:${input.phone}`}:${cartFingerprint}`;
+
+  if (input.idempotencyKey) {
+    const existingOrder = await prisma.order.findUnique({
+      where: { idempotencyKey: input.idempotencyKey },
+      include: { items: true, invoice: { include: { items: true } }, payments: true, deliveries: true, actionLogs: { orderBy: { createdAt: 'asc' } }, user: { select: { id: true, username: true, email: true, avatarUrl: true } } }
+    });
+    if (existingOrder) return { ...existingOrder, buyerId: existingOrder.userId || existingOrder.id, buyer: existingOrder.user, trackingToken: null };
+  }
+
+  if (activeCheckoutLocks.has(lockKey)) throw new Error('Une validation de ce panier est deja en cours.');
+  if (!consumeRateLimit(`checkout:ip:${rawInput.ipAddress || 'unknown'}`, 10, 60 * 60 * 1000)) {
+    throw new Error('Trop de tentatives de checkout. Veuillez reessayer plus tard.');
+  }
+  if (!input.userId && !consumeRateLimit(`checkout:guest:${input.email}:${input.phone}`, 4, 60 * 60 * 1000)) {
+    throw new Error('Trop de commandes invite avec cet email ou telephone. Veuillez reessayer plus tard.');
+  }
+
+  activeCheckoutLocks.add(lockKey);
+
+  try {
+    const duplicateSince = new Date(Date.now() - 15 * 60 * 1000);
+    const duplicateOrder = await prisma.order.findFirst({
+      where: {
+        cartFingerprint,
+        guestEmail: input.userId ? undefined : input.email,
+        guestPhone: input.userId ? undefined : input.phone,
+        userId: input.userId || undefined,
+        status: { in: ACTIVE_ORDER_STATUSES },
+        createdAt: { gte: duplicateSince }
+      }
+    });
+    if (duplicateOrder) throw new Error(`Une commande active existe deja pour ce panier: ${duplicateOrder.orderNumber}.`);
+
+    const proofFileUrl = await validateProofUpload(rawInput.paymentProof);
+    const lines = await buildCheckoutLines(input.items);
+    const subtotal = lines.reduce((sum, line) => sum + line.lineTotal, 0);
+    const discount = 0;
+    const totalAmount = subtotal - discount;
+    const now = new Date();
+    const year = now.getUTCFullYear();
+    const trackingToken = input.userId ? null : crypto.randomBytes(32).toString('hex');
+    const trackingTokenHash = trackingToken ? sha256(trackingToken) : null;
+
+    const order = await prisma.$transaction(async (tx) => {
+      const orderSequence = await nextSequenceValue(tx, `ORDER-${year}`);
+      const invoiceSequence = await nextSequenceValue(tx, `INVOICE-${year}`);
+      const orderNumber = formatDocumentNumber('CMD', year, orderSequence);
+      const invoiceNumber = formatDocumentNumber('FAC', year, invoiceSequence);
+
+      const createdOrder = await tx.order.create({
+        data: {
+          orderNumber,
+          idempotencyKey: input.idempotencyKey || undefined,
+          userId: input.userId,
+          status: 'PAYMENT_UNDER_REVIEW',
+          amount: totalAmount,
+          subtotal,
+          discount,
+          total: totalAmount,
+          currency: 'TND',
+          source: input.source,
+          customerType: input.customerType,
+          guestEmail: input.userId ? null : input.email,
+          guestPhone: input.userId ? null : input.phone,
+          cartFingerprint,
+          trackingTokenHash,
+          expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
+          customerFirstName: input.firstName,
+          customerLastName: input.lastName,
+          customerEmail: input.email,
+          customerPhone: input.phone,
+          paymentMethod: input.paymentMethod,
+          items: {
+            create: lines.map((line) => ({
+              listingId: line.listingId,
+              variantId: line.variantId,
+              quantity: line.quantity,
+              priceSnapshot: line.unitPrice,
+              titleSnapshot: line.titleSnapshot,
+              productSnapshotImage: line.productSnapshotImage,
+              variantSnapshot: line.variantSnapshot,
+              deliveryType: line.deliveryType,
+              status: 'LOCKED'
+            }))
+          },
+          payments: {
+            create: {
+              userId: input.userId,
+              method: input.paymentMethod,
+              status: 'SUBMITTED',
+              amount: totalAmount,
+              currency: 'TND',
+              customerReference: input.customerReference || null,
+              transactionRef: null,
+              proofFileUrl,
+              submittedAt: now
+            }
+          }
+        },
+        include: { items: true, payments: true }
+      });
+
+      const orderItemsByLineKey = new Map(createdOrder.items.map((item) => [`${item.listingId}:${item.variantId || ''}`, item]));
+
+      await tx.invoice.create({
+        data: {
+          invoiceNumber,
+          orderId: createdOrder.id,
+          type: 'PROFORMA',
+          status: 'PENDING_PAYMENT',
+          currency: 'TND',
+          orderNumber,
+          customerFirstName: input.firstName,
+          customerLastName: input.lastName,
+          customerEmail: input.email,
+          customerPhone: input.phone,
+          totalAmount,
+          items: {
+            create: lines.map((line) => ({
+              orderItemId: orderItemsByLineKey.get(`${line.listingId}:${line.variantId || ''}`)?.id,
+              listingId: line.listingId,
+              variantSnapshot: line.variantSnapshot,
+              quantity: line.quantity,
+              unitPrice: line.unitPrice,
+              lineTotal: line.lineTotal,
+              titleSnapshot: line.titleSnapshot
+            }))
+          }
+        }
+      });
+
+      await tx.orderActionLog.createMany({
+        data: [
+          {
+            orderId: createdOrder.id,
+            actorType: input.userId ? 'USER' : 'GUEST',
+            actorId: input.userId || null,
+            action: 'ORDER_CREATED',
+            ipAddress: rawInput.ipAddress,
+            userAgent: rawInput.userAgent,
+            metadata: { cartFingerprint, itemCount: lines.length }
+          },
+          {
+            orderId: createdOrder.id,
+            actorType: input.userId ? 'USER' : 'GUEST',
+            actorId: input.userId || null,
+            action: 'PAYMENT_SUBMITTED',
+            ipAddress: rawInput.ipAddress,
+            userAgent: rawInput.userAgent,
+            metadata: { method: input.paymentMethod, hasProof: Boolean(proofFileUrl), customerReference: input.customerReference || null }
+          }
+        ]
+      });
+
+      return tx.order.findUniqueOrThrow({
+        where: { id: createdOrder.id },
+        include: {
+          items: true,
+          invoice: { include: { items: true } },
+          payments: true,
+          deliveries: true,
+          actionLogs: { orderBy: { createdAt: 'asc' } },
+          user: { select: { id: true, username: true, email: true, avatarUrl: true } }
+        }
+      });
+    });
+
+    return { ...order, buyerId: order.userId || order.id, buyer: order.user, trackingToken };
+  } finally {
+    activeCheckoutLocks.delete(lockKey);
+  }
 };
 
 export const clearUserCart = async (userId: string) => {
   const cart = await prisma.cart.findUnique({ where: { userId } });
   if (!cart) return;
   await prisma.cartItem.deleteMany({ where: { cartId: cart.id } });
+};
+
+export const getPaymentInstructions = (method?: string | null) => {
+  const selected = (method || 'whatsapp').toLowerCase();
+  const labels: Record<string, string> = {
+    whatsapp: 'Envoyez la confirmation au support WhatsApp Tunibots avec votre numero de commande.',
+    edinar: 'Effectuez le paiement via EDINAR puis ajoutez la reference de transaction.',
+    flouci: 'Effectuez le paiement via Flouci puis ajoutez la reference et une capture si disponible.',
+    bank_transfer: 'Effectuez le virement bancaire puis ajoutez la reference du virement.',
+    cash: 'Un agent Tunibots confirmera le paiement cash manuellement.'
+  };
+  return labels[selected] || labels.whatsapp;
 };

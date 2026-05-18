@@ -8,6 +8,7 @@ import Subscription from './pages/Subscription';
 import Cart from './pages/Cart';
 import CategoryPage from './pages/CategoryPage';
 import ProductPage from './pages/ProductPage';
+import OrderTracking from './pages/OrderTracking';
 import About from './pages/About';
 import Contact from './pages/Contact';
 import PrivacyPolicy from './pages/PrivacyPolicy';
@@ -73,6 +74,9 @@ const resolveRouteFromPath = (pathname: string): { page: string; slug?: string }
   if (pathname === '/cart') {
     return { page: 'cart' };
   }
+  if (pathname === '/order-track') {
+    return { page: 'order-track' };
+  }
   if (pathname === '/subscription') {
     return { page: 'subscription' };
   }
@@ -123,6 +127,8 @@ const getPathForPage = (page: string, slug?: string) => {
       return '/register';
     case 'cart':
       return '/cart';
+    case 'order-track':
+      return '/order-track';
     case 'subscription':
       return '/subscription';
     case 'about':
@@ -833,6 +839,15 @@ const App: React.FC = () => {
     navigateTo('product');
   };
 
+  const handleOrderCreated = (order: Order) => {
+    setOrders(prev => {
+      const exists = prev.some((current) => current.id === order.id);
+      return exists
+        ? prev.map((current) => current.id === order.id ? { ...current, ...order } : current)
+        : [order, ...prev];
+    });
+  };
+
   const handleUpdateOrderStatus = async (orderId: string, status: OrderStatus) => {
     try {
         await api.updateOrderStatus(orderId, status);
@@ -859,6 +874,28 @@ const App: React.FC = () => {
     }
   };
 
+  const handleAdminOrderAction = async (
+    action: 'approvePayment' | 'rejectPayment' | 'createDelivery' | 'sendDelivery' | 'resendDelivery',
+    orderId: string,
+    payload?: any
+  ) => {
+    try {
+      const updatedOrder =
+        action === 'approvePayment' ? await api.approveOrderPayment(orderId) :
+        action === 'rejectPayment' ? await api.rejectOrderPayment(orderId, payload?.reason || 'Paiement rejeté.') :
+        action === 'createDelivery' ? await api.createOrderDelivery(orderId, payload) :
+        action === 'sendDelivery' ? await api.sendOrderDelivery(orderId) :
+        await api.resendOrderDeliveryEmail(orderId);
+
+      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, ...updatedOrder } : o));
+      showNotification("Commande mise à jour");
+    } catch (err) {
+      console.error(err);
+      showNotification(err instanceof Error ? err.message : "Action admin impossible", 'error');
+      throw err;
+    }
+  };
+
   const handleUpdateSiteConfig = async (config: Partial<SiteConfig>) => {
     try {
         const nextConfig = await api.updateSiteConfig(config);
@@ -877,7 +914,8 @@ const App: React.FC = () => {
       case 'login': return <Login onLoginSuccess={handleLoginSuccess} navigateTo={navigateTo} siteConfig={siteConfig} initialMode="login" socialNextPath={pendingNavigation ? getPathForPage(pendingNavigation.page, pendingNavigation.slug) : '/dashboard'} />;
       case 'register': return <Login onLoginSuccess={handleLoginSuccess} navigateTo={navigateTo} siteConfig={siteConfig} initialMode="register" socialNextPath={pendingNavigation ? getPathForPage(pendingNavigation.page, pendingNavigation.slug) : '/dashboard'} />;
       case 'admin-login': return <Login onLoginSuccess={handleLoginSuccess} navigateTo={navigateTo} siteConfig={siteConfig} initialMode="login" audience="admin" />;
-      case 'cart': return <Cart navigateTo={navigateTo} onCartUpdate={updateCartCount} siteConfig={siteConfig} listings={publicListings} user={user} />;
+      case 'cart': return <Cart navigateTo={navigateTo} onCartUpdate={updateCartCount} siteConfig={siteConfig} listings={publicListings} user={user} orders={orders} onOrderCreated={handleOrderCreated} />;
+      case 'order-track': return <OrderTracking />;
       case 'subscription': return <Subscription user={user} onSubscribe={() => refreshData()} navigateTo={navigateTo} onRequireLogin={() => requireLoginFor('subscription')} />;
       case 'about': return <About siteConfig={siteConfig} navigateTo={navigateTo} />;
       case 'contact': return <Contact siteConfig={siteConfig} navigateTo={navigateTo} />;
@@ -932,6 +970,7 @@ const App: React.FC = () => {
                   listings={listings} 
                   categories={categories} 
                   onUpdateStatus={handleUpdateOrderStatus} 
+                  onAdminOrderAction={handleAdminOrderAction}
                   onCreateListing={handleCreateListing} 
                   onUpdateListing={handleUpdateListing}
                   onDeleteListing={handleDeleteListing}

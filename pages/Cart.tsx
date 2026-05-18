@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowRight, CheckCircle2, CreditCard, Lock, ShoppingBag, Smartphone, Trash2, Wallet, X } from 'lucide-react';
 import { api } from '../services/api';
-import { CartItem, Listing, SiteConfig, User } from '../types';
+import { CartItem, Listing, Order, OrderStatus, SiteConfig, User } from '../types';
 import { clearGuestCart, getGuestCartCount, getGuestCartItems, removeGuestCartLine } from '../utils/guestCart';
 import { getListingFinalPrice } from '../utils/pricing';
 import PriceDisplay from '../components/PriceDisplay';
@@ -13,6 +13,8 @@ interface CartProps {
   siteConfig: SiteConfig;
   listings: Listing[];
   user: User;
+  orders: Order[];
+  onOrderCreated: (order: Order) => void;
 }
 
 type GuestFormState = {
@@ -26,13 +28,57 @@ type CheckoutSuccessState = {
   orderNumber: string;
   invoiceNumber?: string;
   emailStatus?: string;
+  status?: string;
+  trackingToken?: string | null;
 };
 
-const Cart: React.FC<CartProps> = ({ navigateTo, onCartUpdate, siteConfig, listings, user }) => {
+type PaymentProofState = {
+  fileName: string;
+  mimeType: string;
+  size: number;
+  dataUrl: string;
+} | null;
+
+const PAYMENT_INSTRUCTIONS: Record<string, string> = {
+  whatsapp: 'Envoyez votre paiement ou capture au support WhatsApp avec le numero de commande. Un agent validera manuellement.',
+  edinar: 'Payez via EDINAR, puis ajoutez la reference de transaction et une capture si disponible.',
+  flouci: 'Payez via Flouci, puis ajoutez la reference Flouci et une capture si disponible.',
+  bank_transfer: 'Effectuez le virement puis ajoutez la reference bancaire et le recu.',
+  cash: 'Choisissez cette option si un agent doit confirmer un paiement cash.'
+};
+
+const fileToProofPayload = (file: File) => new Promise<PaymentProofState>((resolve, reject) => {
+  if (file.size > 5 * 1024 * 1024) {
+    reject(new Error('La preuve de paiement ne doit pas depasser 5 Mo.'));
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => resolve({
+    fileName: file.name,
+    mimeType: file.type,
+    size: file.size,
+    dataUrl: String(reader.result || '')
+  });
+  reader.onerror = () => reject(new Error('Impossible de lire le fichier de preuve.'));
+  reader.readAsDataURL(file);
+});
+
+const ACTIVE_ORDER_STATUSES = [
+  OrderStatus.PENDING_PAYMENT,
+  OrderStatus.PAYMENT_UNDER_REVIEW,
+  OrderStatus.PAYMENT_APPROVED,
+  OrderStatus.IN_DELIVERY,
+  OrderStatus.IN_PROGRESS,
+  OrderStatus.PAYMENT_RECEIVED
+];
+
+const Cart: React.FC<CartProps> = ({ navigateTo, onCartUpdate, siteConfig, listings, user, orders, onOrderCreated }) => {
   const [items, setItems] = useState<CartItem[]>([]);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('whatsapp');
+  const [paymentReference, setPaymentReference] = useState('');
+  const [paymentProof, setPaymentProof] = useState<PaymentProofState>(null);
   const [formError, setFormError] = useState('');
   const [guestForm, setGuestForm] = useState<GuestFormState>({
     firstName: user.fullName?.split(' ')[0] || '',
@@ -43,6 +89,11 @@ const Cart: React.FC<CartProps> = ({ navigateTo, onCartUpdate, siteConfig, listi
   const [checkoutSuccess, setCheckoutSuccess] = useState<CheckoutSuccessState | null>(null);
 
   const isGuest = user.id === 'guest';
+  const latestActiveOrder = !isGuest
+    ? [...orders]
+        .filter((order) => ACTIVE_ORDER_STATUSES.includes(order.status))
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0]
+    : null;
 
   const loadGuestCart = () => {
     const guestItems = getGuestCartItems(listings);
@@ -109,20 +160,28 @@ const Cart: React.FC<CartProps> = ({ navigateTo, onCartUpdate, siteConfig, listi
     setFormError('');
 
     try {
-      const order = isGuest
-        ? await api.guestCheckout({
+      const idempotencyKey = `checkout-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const order = await api.confirmCheckout(
+        isGuest
+          ? {
             ...guestForm,
             paymentMethod,
+            customerReference: paymentReference,
+            paymentProof,
             items: items.map((item) => ({
               listingId: item.listingId,
               variantId: item.variantId,
               quantity: item.quantity
             }))
-          })
-        : await api.checkout({
+          }
+          : {
             paymentMethod,
-            phone: guestForm.phone || user.phone
-          });
+            phone: guestForm.phone || user.phone || '',
+            customerReference: paymentReference,
+            paymentProof
+          },
+        idempotencyKey
+      );
 
       if (isGuest) {
         clearGuestCart();
@@ -130,10 +189,13 @@ const Cart: React.FC<CartProps> = ({ navigateTo, onCartUpdate, siteConfig, listi
 
       setItems([]);
       onCartUpdate(0);
+      onOrderCreated(order);
       setCheckoutSuccess({
         orderNumber: order.orderNumber,
         invoiceNumber: order.invoice?.invoiceNumber,
-        emailStatus: order.emailStatus
+        emailStatus: order.emailStatus,
+        status: order.status,
+        trackingToken: order.trackingToken
       });
       setShowPaymentForm(false);
     } catch (error) {
@@ -168,9 +230,10 @@ const Cart: React.FC<CartProps> = ({ navigateTo, onCartUpdate, siteConfig, listi
               </div>
 
               <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-sm text-emerald-900">
-                <p>Une facture TuniBots a été envoyée à votre adresse email.</p>
-                <p className="mt-2">Un membre de notre support vous guidera dans votre commande.</p>
+                <p>Votre paiement est maintenant en revue manuelle.</p>
+                <p className="mt-2">Le produit digital restera verrouillé jusqu'à validation du paiement et livraison explicite par un agent.</p>
                 <p className="mt-2">Conservez votre numéro de commande pour le suivi.</p>
+                {isGuest && <p className="mt-2">Un email de suivi vous sera envoyé. Pas besoin de copier un long token.</p>}
                 {checkoutSuccess.emailStatus === 'FAILED' && (
                   <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800">
                     L’email n’a pas pu être envoyé automatiquement, mais votre commande est bien enregistrée.
@@ -181,10 +244,10 @@ const Cart: React.FC<CartProps> = ({ navigateTo, onCartUpdate, siteConfig, listi
 
             <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6">
               <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-indigo-600">{isGuest ? 'Optionnel' : 'Suivi'}</div>
-              <h2 className="mt-3 text-xl font-black text-slate-900">{isGuest ? 'Créez un compte' : 'Votre compte est à jour'}</h2>
+                <h2 className="mt-3 text-xl font-black text-slate-900">{isGuest ? 'Suivi invite disponible' : 'Votre compte est à jour'}</h2>
               <p className="mt-3 text-sm leading-6 text-slate-600">
                 {isGuest
-                  ? 'Créez un compte pour consulter votre historique d’achat, accéder à vos factures et profiter de points de fidélité.'
+                  ? 'Un lien/token de suivi est envoyé par email. Vous pouvez aussi créer un compte pour retrouver vos commandes plus facilement.'
                   : 'Vous pouvez suivre cette commande depuis votre espace client et consulter votre historique à tout moment.'}
               </p>
               {isGuest && (
@@ -211,6 +274,45 @@ const Cart: React.FC<CartProps> = ({ navigateTo, onCartUpdate, siteConfig, listi
                 className="mt-3 w-full rounded-2xl border border-slate-300 px-5 py-3 text-sm font-bold text-slate-700 hover:border-slate-400 hover:bg-white"
               >
                 Retour à la boutique
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (items.length === 0 && latestActiveOrder) {
+    return (
+      <div className="max-w-4xl mx-auto py-16 px-4">
+        <div className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-xl">
+          <div className="bg-slate-950 px-8 py-8 text-white">
+            <div className="text-xs font-black uppercase tracking-[0.2em] text-emerald-300">Commande en cours</div>
+            <h1 className="mt-2 text-3xl font-black">Votre commande est suivie ici</h1>
+            <p className="mt-3 text-sm text-slate-300">Le panier est vide parce que votre commande a bien été créée.</p>
+          </div>
+          <div className="p-8">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+              <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400">Commande</div>
+              <div className="mt-2 text-2xl font-black text-slate-900">{latestActiveOrder.orderNumber}</div>
+              <div className="mt-2 inline-flex rounded-full bg-amber-100 px-3 py-1 text-xs font-black uppercase text-amber-700">
+                {latestActiveOrder.status === OrderStatus.PAYMENT_UNDER_REVIEW ? 'Paiement en cours de traitement' : latestActiveOrder.status}
+              </div>
+            </div>
+            <div className="mt-5 space-y-3">
+              {latestActiveOrder.items.map((item) => (
+                <div key={item.id} className="flex justify-between gap-4 rounded-xl border border-slate-100 px-4 py-3 text-sm">
+                  <span className="font-bold text-slate-900">{item.titleSnapshot}</span>
+                  <span className="text-slate-500">x{item.quantity}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <button onClick={() => navigateTo('user-dashboard')} className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white hover:bg-indigo-700">
+                Voir historique des commandes
+              </button>
+              <button onClick={() => navigateTo('home')} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50">
+                Continuer mes achats
               </button>
             </div>
           </div>
@@ -251,7 +353,7 @@ const Cart: React.FC<CartProps> = ({ navigateTo, onCartUpdate, siteConfig, listi
 
             <div className="space-y-6 px-6 py-6">
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                {['whatsapp', 'edinar', 'flouci', ...(siteConfig.click2payEnabled ? ['click2pay'] : [])].map((pm) => (
+                {['whatsapp', 'edinar', 'flouci', 'bank_transfer', 'cash', ...(siteConfig.click2payEnabled ? ['click2pay'] : [])].map((pm) => (
                   <button
                     key={pm}
                     type="button"
@@ -265,6 +367,11 @@ const Cart: React.FC<CartProps> = ({ navigateTo, onCartUpdate, siteConfig, listi
                     <span className="text-[11px] font-black uppercase">{pm}</span>
                   </button>
                 ))}
+              </div>
+
+              <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4 text-sm leading-6 text-indigo-950">
+                <div className="font-black">Instructions de paiement</div>
+                <p className="mt-1">{PAYMENT_INSTRUCTIONS[paymentMethod] || PAYMENT_INSTRUCTIONS.whatsapp}</p>
               </div>
 
               {isGuest && (
@@ -295,6 +402,36 @@ const Cart: React.FC<CartProps> = ({ navigateTo, onCartUpdate, siteConfig, listi
                 </div>
               )}
 
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <label className="mb-2 block text-sm font-bold text-slate-700">Reference paiement (optionnel)</label>
+                  <input type="text" value={paymentReference} onChange={(e) => setPaymentReference(e.target.value)} placeholder="ID transaction / note agent" className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-indigo-500" />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-bold text-slate-700">Preuve paiement (optionnel)</label>
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,application/pdf"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) {
+                        setPaymentProof(null);
+                        return;
+                      }
+                      try {
+                        setPaymentProof(await fileToProofPayload(file));
+                        setFormError('');
+                      } catch (error) {
+                        setPaymentProof(null);
+                        setFormError(error instanceof Error ? error.message : 'Fichier invalide.');
+                      }
+                    }}
+                    className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-indigo-500"
+                  />
+                  {paymentProof && <div className="mt-2 text-xs font-semibold text-emerald-700">{paymentProof.fileName} pret a envoyer</div>}
+                </div>
+              </div>
+
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="flex justify-between text-sm text-slate-600"><span>Total à payer</span><span className="font-bold">{total.toFixed(2)} TND</span></div>
               </div>
@@ -315,7 +452,7 @@ const Cart: React.FC<CartProps> = ({ navigateTo, onCartUpdate, siteConfig, listi
                 {isCheckingOut ? (
                   <div className="mr-2 h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
                 ) : (
-                  <>Valider et recevoir la facture <ArrowRight size={20} className="ml-2" /></>
+                  <>Confirmer la soumission paiement <ArrowRight size={20} className="ml-2" /></>
                 )}
               </button>
             </div>

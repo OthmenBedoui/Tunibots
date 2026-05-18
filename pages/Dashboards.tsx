@@ -18,6 +18,7 @@ interface AdminDashboardProps {
   listings: Listing[];
   categories: Category[];
   onUpdateStatus: (orderId: string, status: OrderStatus) => void;
+  onAdminOrderAction: (action: 'approvePayment' | 'rejectPayment' | 'createDelivery' | 'sendDelivery' | 'resendDelivery', orderId: string, payload?: any) => Promise<void>;
   onCreateListing: (listing: Partial<Listing>) => Promise<void>;
   onUpdateListing: (listingId: string, listing: Partial<Listing>) => Promise<void>;
   onDeleteListing: (listingId: string) => Promise<void>;
@@ -199,33 +200,71 @@ const DEFAULT_EMAIL_TEMPLATES: Record<string, { label: string; subject: string; 
   }
 };
 
-const PRODUCT_REGION_OPTIONS = [
-  'Global',
+const GLOBAL_REGION_OPTION = 'Global';
+
+const PRODUCT_COUNTRY_OPTIONS = [
   'Tunisia',
   'Algeria',
   'Morocco',
   'Libya',
   'Egypt',
+  'Mauritania',
+  'Senegal',
+  'Ivory Coast',
+  'Nigeria',
+  'South Africa',
   'France',
   'Germany',
   'Italy',
   'Spain',
   'United Kingdom',
+  'Ireland',
+  'Portugal',
+  'Belgium',
+  'Netherlands',
+  'Switzerland',
+  'Austria',
+  'Sweden',
+  'Norway',
+  'Denmark',
+  'Finland',
+  'Poland',
+  'Romania',
+  'Greece',
   'United States',
   'Canada',
-  'Europe',
-  'MENA',
-  'Middle East',
+  'Mexico',
   'Turkey',
   'Saudi Arabia',
   'United Arab Emirates',
+  'Qatar',
+  'Kuwait',
+  'Bahrain',
+  'Oman',
+  'Jordan',
+  'Lebanon',
+  'Iraq',
+  'Israel',
   'Brazil',
   'Argentina',
+  'Chile',
+  'Colombia',
+  'Peru',
+  'India',
+  'Pakistan',
+  'China',
   'Japan',
   'South Korea',
   'Singapore',
+  'Malaysia',
+  'Indonesia',
+  'Thailand',
+  'Philippines',
+  'Vietnam',
   'Australia'
 ];
+
+const PRODUCT_REGION_OPTIONS = [GLOBAL_REGION_OPTION, ...PRODUCT_COUNTRY_OPTIONS];
 
 const SYSTEM_OS_OPTIONS = [
   'Windows 11 (64-BIT Required)',
@@ -328,16 +367,27 @@ const RequirementSelect = ({
 };
 
 const RegionSelect = ({ value, onChange }: { value: string; onChange: (value: string) => void }) => {
-  const options = value && !PRODUCT_REGION_OPTIONS.includes(value) ? [value, ...PRODUCT_REGION_OPTIONS] : PRODUCT_REGION_OPTIONS;
-
   return (
     <select className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700" value={value} onChange={(e) => onChange(e.target.value)}>
-      {options.map((option) => (
-        <option key={option} value={option}>{option}</option>
-      ))}
+      {value && !PRODUCT_REGION_OPTIONS.includes(value) && <option value={value}>{value}</option>}
+      <option value={GLOBAL_REGION_OPTION}>{GLOBAL_REGION_OPTION}</option>
+      <optgroup label="Pays">
+        {PRODUCT_COUNTRY_OPTIONS.map((option) => (
+          <option key={option} value={option}>{option}</option>
+        ))}
+      </optgroup>
     </select>
   );
 };
+
+const CountrySelect = ({ value, onChange }: { value: string; onChange: (value: string) => void }) => (
+  <select className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700" value={value} onChange={(e) => onChange(e.target.value)}>
+    {value && !PRODUCT_COUNTRY_OPTIONS.includes(value) && <option value={value}>{value}</option>}
+    {PRODUCT_COUNTRY_OPTIONS.map((option) => (
+      <option key={option} value={option}>{option}</option>
+    ))}
+  </select>
+);
 
 const IconPicker = ({
   label,
@@ -410,30 +460,41 @@ const SubCategoryIconPicker = ({
 );
 
 const ORDER_STATUS_STEPS: { status: OrderStatus; label: string; description: string }[] = [
-  { status: OrderStatus.IN_PROGRESS, label: 'En cours', description: 'Commande confirmée, facture envoyée et support en accompagnement.' },
+  { status: OrderStatus.PAYMENT_UNDER_REVIEW, label: 'Paiement en revue', description: 'Commande reçue, paiement soumis et en validation manuelle.' },
+  { status: OrderStatus.PAYMENT_APPROVED, label: 'Paiement approuvé', description: 'Paiement validé, livraison en préparation.' },
+  { status: OrderStatus.IN_DELIVERY, label: 'En livraison', description: 'Contenu digital préparé par un agent.' },
   { status: OrderStatus.DELIVERED, label: 'Livré', description: 'Commande livrée au client et clôturée.' }
 ];
 
 const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
+  [OrderStatus.DRAFT_CART]: 'Panier',
   [OrderStatus.IN_PROGRESS]: 'En cours',
   [OrderStatus.DELIVERED]: 'Livré',
   [OrderStatus.REGISTERED]: 'En cours',
-  [OrderStatus.PENDING_PAYMENT]: 'En cours',
-  [OrderStatus.PAYMENT_RECEIVED]: 'En cours',
+  [OrderStatus.PENDING_PAYMENT]: 'Paiement attendu',
+  [OrderStatus.PAYMENT_UNDER_REVIEW]: 'Paiement en revue',
+  [OrderStatus.PAYMENT_APPROVED]: 'Paiement approuvé',
+  [OrderStatus.PAYMENT_REJECTED]: 'Paiement rejeté',
+  [OrderStatus.IN_DELIVERY]: 'En livraison',
+  [OrderStatus.PAYMENT_RECEIVED]: 'Paiement reçu',
   [OrderStatus.COMPLETED]: 'Livré',
-  [OrderStatus.CANCELLED]: 'Annulée'
+  [OrderStatus.CANCELLED]: 'Annulée',
+  [OrderStatus.REFUNDED]: 'Remboursée'
 };
 
 const getOrderStepIndex = (status: OrderStatus) => {
-  if ([OrderStatus.REGISTERED, OrderStatus.PENDING_PAYMENT, OrderStatus.PAYMENT_RECEIVED].includes(status)) return 0;
-  if (status === OrderStatus.COMPLETED) return 1;
+  if ([OrderStatus.REGISTERED, OrderStatus.PENDING_PAYMENT, OrderStatus.PAYMENT_UNDER_REVIEW, OrderStatus.IN_PROGRESS].includes(status)) return 0;
+  if ([OrderStatus.PAYMENT_RECEIVED, OrderStatus.PAYMENT_APPROVED].includes(status)) return 1;
+  if (status === OrderStatus.IN_DELIVERY) return 2;
+  if (status === OrderStatus.COMPLETED) return 3;
   const index = ORDER_STATUS_STEPS.findIndex((step) => step.status === status);
   return index === -1 ? -1 : index;
 };
 
 const getOrderStatusClasses = (status: OrderStatus) => {
   if (status === OrderStatus.DELIVERED || status === OrderStatus.COMPLETED) return 'bg-green-100 text-green-700';
-  if (status === OrderStatus.CANCELLED) return 'bg-red-100 text-red-700';
+  if (status === OrderStatus.CANCELLED || status === OrderStatus.PAYMENT_REJECTED || status === OrderStatus.REFUNDED) return 'bg-red-100 text-red-700';
+  if (status === OrderStatus.PAYMENT_APPROVED || status === OrderStatus.IN_DELIVERY) return 'bg-blue-100 text-blue-700';
   return 'bg-amber-100 text-amber-700';
 };
 
@@ -443,7 +504,7 @@ const getListingStateClasses = (listing: Listing) => {
   return 'bg-red-100 text-red-700';
 };
 
-export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings, categories, onUpdateStatus, onCreateListing, onUpdateListing, onDeleteListing, onRefreshCategories, user, siteConfig, onUpdateSiteConfig, onResendOrderInvoiceEmail, navigateTo, focusTab, onFocusTabHandled, focusOrderId, onFocusOrderHandled }) => {
+export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings, categories, onUpdateStatus, onAdminOrderAction, onCreateListing, onUpdateListing, onDeleteListing, onRefreshCategories, user, siteConfig, onUpdateSiteConfig, onResendOrderInvoiceEmail, navigateTo, focusTab, onFocusTabHandled, focusOrderId, onFocusOrderHandled }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'orders' | 'listings' | 'create' | 'users' | 'categories' | 'settings' | 'customization' | 'store-config' | 'email-config' | 'notification-config' | 'seo' | 'data'>('overview');
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [stats, setStats] = useState<{name: string, sales: number, orders: number}[]>([]);
@@ -456,6 +517,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
   const [orderSearch, setOrderSearch] = useState('');
   const [orderSort, setOrderSort] = useState<'newest' | 'oldest' | 'amount-desc' | 'amount-asc'>('newest');
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+  const [deliveryDrafts, setDeliveryDrafts] = useState<Record<string, { orderItemId: string; deliveryType: string; deliveryContent: string; activationGuide: string; restrictions: string; region: string }>>({});
   const [adminToast, setAdminToast] = useState<{ type: 'success' | 'error'; title: string; message: string } | null>(null);
   const [adminConfirmation, setAdminConfirmation] = useState<{
     title: string;
@@ -4445,12 +4507,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                       <input className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" value={newListingPlatform} onChange={(e) => setNewListingPlatform(e.target.value)} placeholder="Roblox / Steam / Xbox" />
                     </div>
                     <div>
-                      <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Region</label>
-                      <RegionSelect value={newListingRegion} onChange={setNewListingRegion} />
+                      <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Region du produit</label>
+                      <RegionSelect
+                        value={newListingRegion}
+                        onChange={(region) => {
+                          setNewListingRegion(region);
+                          if (region !== GLOBAL_REGION_OPTION) {
+                            setNewListingActivationCountry(region);
+                          }
+                        }}
+                      />
                     </div>
                     <div>
-                      <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Activation country</label>
-                      <input className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" value={newListingActivationCountry} onChange={(e) => setNewListingActivationCountry(e.target.value)} placeholder="Tunisia" />
+                      <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Pays d'activation</label>
+                      <CountrySelect value={newListingActivationCountry} onChange={setNewListingActivationCountry} />
                     </div>
                   </div>
                   <div className="mt-5 grid grid-cols-1 gap-5">
@@ -4463,6 +4533,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                       <RichTextEditor label="Activation guide popup content" value={newListingActivationGuideContent} onChange={setNewListingActivationGuideContent} />
                     </div>
                     <div className="rounded-xl border border-slate-200 bg-white p-4">
+                      <label className="mb-1 block text-[10px] font-black uppercase tracking-wider text-slate-500">Titre du popup region</label>
                       <input className="mb-3 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold" value={newListingRegionTitle} onChange={(e) => setNewListingRegionTitle(e.target.value)} placeholder="Region" />
                       <RichTextEditor label="Region popup content" value={newListingRegionContent} onChange={setNewListingRegionContent} />
                     </div>
@@ -4913,7 +4984,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                      <div className="flex flex-wrap gap-2">
                        {[
                          ['all', 'Toutes'],
-                         [OrderStatus.IN_PROGRESS, 'En cours'],
+                         [OrderStatus.PAYMENT_UNDER_REVIEW, 'Paiement en revue'],
+                         [OrderStatus.PAYMENT_APPROVED, 'Paiement OK'],
+                         [OrderStatus.IN_DELIVERY, 'En livraison'],
                          [OrderStatus.DELIVERED, 'Livrées'],
                          [OrderStatus.CANCELLED, 'Annulées']
                        ].map(([status, label]) => (
@@ -4929,9 +5002,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                    <div className="space-y-4">
                     {filteredOrders.map((o) => {
                         const currentStepIndex = getOrderStepIndex(o.status);
-                        const deliveredItems = o.items.filter((item) => item.deliveredContent);
                         const isExpanded = expandedOrderId === o.id;
                         const customerName = o.buyerDisplayName || [o.customerFirstName, o.customerLastName].filter(Boolean).join(' ') || o.buyer?.username || 'Client';
+                        const payment = o.payments?.[0];
+                        const deliveryDraft = deliveryDrafts[o.id] || { orderItemId: o.items[0]?.id || '', deliveryType: o.items[0]?.deliveryType || 'MIXED', deliveryContent: '', activationGuide: '', restrictions: '', region: '' };
+                        const updateDeliveryDraft = (patch: Partial<typeof deliveryDraft>) => setDeliveryDrafts((current) => ({ ...current, [o.id]: { ...deliveryDraft, ...patch } }));
                         return (
                           <div key={o.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:border-slate-300 hover:shadow-md">
                             <div className="grid gap-4 p-5 lg:grid-cols-[1fr_180px_190px] lg:items-center">
@@ -4942,6 +5017,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                                   <span className={`rounded-full px-3 py-1 text-[11px] font-black uppercase ${o.emailStatus === 'SENT' ? 'bg-emerald-50 text-emerald-700' : o.emailStatus === 'FAILED' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>
                                     Email {o.emailStatus || 'PENDING'}
                                   </span>
+                                  {payment && (
+                                    <span className={`rounded-full px-3 py-1 text-[11px] font-black uppercase ${payment.status === 'APPROVED' ? 'bg-emerald-50 text-emerald-700' : payment.status === 'REJECTED' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>
+                                      Paiement {payment.status}
+                                    </span>
+                                  )}
                                 </div>
                                 <div className="flex flex-col gap-3 md:flex-row md:items-start">
                                   <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-100 font-black text-slate-700">
@@ -4963,6 +5043,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                                 <div className="text-xs font-black uppercase tracking-widest text-slate-400">Paiement</div>
                                 <div className="mt-2 font-black text-slate-900">{paymentLabels[(o.paymentMethod || '').toLowerCase()] || o.paymentMethod || 'À confirmer'}</div>
                                 <div className="mt-1 text-xs text-slate-500">{o.invoice?.invoiceNumber ? `Facture ${o.invoice.invoiceNumber}` : 'Facture non liée'}</div>
+                                {payment?.customerReference && <div className="mt-1 break-all text-xs text-slate-500">Ref: {payment.customerReference}</div>}
+                                {payment?.proofFileUrl && <div className="mt-1 break-all text-xs font-semibold text-indigo-600">Preuve: {payment.proofFileUrl}</div>}
                               </div>
                               <div className="space-y-3">
                                 <div className="text-right">
@@ -4973,9 +5055,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                                   <button type="button" onClick={() => setExpandedOrderId(isExpanded ? null : o.id)} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">
                                     {isExpanded ? 'Fermer' : 'Détails'}
                                   </button>
-                                  {isActiveStatus(o.status) ? (
-                                    <button type="button" onClick={() => onUpdateStatus(o.id, OrderStatus.DELIVERED)} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white hover:bg-emerald-700">
-                                      Livrer
+                                  {o.status === OrderStatus.PAYMENT_UNDER_REVIEW ? (
+                                    <button type="button" onClick={() => onAdminOrderAction('approvePayment', o.id)} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white hover:bg-emerald-700">
+                                      Approuver
+                                    </button>
+                                  ) : o.status !== OrderStatus.DELIVERED ? (
+                                    <button type="button" onClick={() => onAdminOrderAction('sendDelivery', o.id)} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white hover:bg-emerald-700">
+                                      Envoyer
                                     </button>
                                   ) : (
                                     <button type="button" onClick={() => onUpdateStatus(o.id, OrderStatus.IN_PROGRESS)} className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-black text-white hover:bg-black">
@@ -4994,7 +5080,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                                       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                                         {ORDER_STATUS_STEPS.map((step, index) => {
                                           const isDone = currentStepIndex >= index;
-                                          const isCurrent = o.status === step.status || (index === 0 && ['REGISTERED', 'PENDING_PAYMENT', 'PAYMENT_RECEIVED'].includes(o.status));
+                                          const isCurrent = o.status === step.status || (index === 0 && [OrderStatus.REGISTERED, OrderStatus.PENDING_PAYMENT, OrderStatus.PAYMENT_UNDER_REVIEW, OrderStatus.IN_PROGRESS].includes(o.status));
                                           return (
                                             <div key={step.status} className={`rounded-2xl border p-4 ${o.status === OrderStatus.CANCELLED ? 'border-red-200 bg-red-50' : isCurrent ? 'border-indigo-200 bg-indigo-50' : isDone ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-slate-50'}`}>
                                               <div className="font-black text-slate-900">{step.label}</div>
@@ -5022,27 +5108,71 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                                       </div>
                                     </div>
                                     <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                                      <div className="mb-3 text-xs font-black uppercase tracking-widest text-slate-400">Contenu livré / accès</div>
-                                      {deliveredItems.length > 0 ? (
-                                        <div className="space-y-3">
-                                          {deliveredItems.map((item) => (
-                                            <div key={item.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-                                              <div className="mb-2 text-xs font-bold text-slate-700">{item.titleSnapshot}</div>
-                                              <div className="break-all font-mono text-sm text-slate-900">{item.deliveredContent}</div>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      ) : (
-                                        <div className="text-sm italic text-slate-400">Aucun contenu livré pour le moment.</div>
-                                      )}
+                                      <div className="mb-3 text-xs font-black uppercase tracking-widest text-slate-400">Delivery editor</div>
+                                      <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-800">
+                                        This content will become visible to the customer and will be sent by email.
+                                      </div>
+                                      <div className="grid gap-3 md:grid-cols-2">
+                                        <select value={deliveryDraft.orderItemId} onChange={(e) => updateDeliveryDraft({ orderItemId: e.target.value })} className="rounded-xl border border-slate-200 px-3 py-2 text-sm">
+                                          {o.items.map((item) => <option key={item.id} value={item.id}>{item.titleSnapshot}</option>)}
+                                        </select>
+                                        <select value={deliveryDraft.deliveryType} onChange={(e) => updateDeliveryDraft({ deliveryType: e.target.value })} className="rounded-xl border border-slate-200 px-3 py-2 text-sm">
+                                          {['KEY', 'ACCOUNT', 'FILE', 'LINK', 'MIXED'].map((type) => <option key={type} value={type}>{type}</option>)}
+                                        </select>
+                                      </div>
+                                      <textarea value={deliveryDraft.deliveryContent} onChange={(e) => updateDeliveryDraft({ deliveryContent: e.target.value })} placeholder="Key, login/password, file link, notes..." className="mt-3 min-h-[110px] w-full rounded-xl border border-slate-200 px-3 py-2 font-mono text-sm" />
+                                      <div className="mt-3 grid gap-3 md:grid-cols-3">
+                                        <input value={deliveryDraft.activationGuide} onChange={(e) => updateDeliveryDraft({ activationGuide: e.target.value })} placeholder="Activation guide" className="rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+                                        <input value={deliveryDraft.restrictions} onChange={(e) => updateDeliveryDraft({ restrictions: e.target.value })} placeholder="Restrictions" className="rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+                                        <input value={deliveryDraft.region} onChange={(e) => updateDeliveryDraft({ region: e.target.value })} placeholder="Region" className="rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+                                      </div>
+                                      <div className="mt-3 flex flex-wrap gap-2">
+                                        <button type="button" onClick={() => onAdminOrderAction('createDelivery', o.id, deliveryDraft)} className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-black text-white hover:bg-black">
+                                          Préparer livraison chiffrée
+                                        </button>
+                                        <button type="button" onClick={() => onAdminOrderAction('sendDelivery', o.id)} className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-black text-white hover:bg-emerald-700">
+                                          Envoyer livraison
+                                        </button>
+                                        <button type="button" onClick={() => onAdminOrderAction('resendDelivery', o.id)} className="rounded-xl bg-indigo-50 px-4 py-2 text-xs font-black text-indigo-700 hover:bg-indigo-100">
+                                          Renvoyer livraison
+                                        </button>
+                                      </div>
+                                      <div className="mt-4 space-y-2">
+                                        {(o.deliveries || []).map((delivery) => (
+                                          <div key={delivery.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs text-slate-600">
+                                            <span className="font-black text-slate-900">{delivery.deliveryType}</span> · {delivery.status} · resend {delivery.resendCount || 0}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                                      <div className="mb-3 text-xs font-black uppercase tracking-widest text-slate-400">Action logs</div>
+                                      <div className="space-y-2">
+                                        {(o.actionLogs || []).map((log) => (
+                                          <div key={log.id} className="rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
+                                            <div className="font-black text-slate-900">{log.action}</div>
+                                            <div>{log.actorType} {log.actorId || ''} · {new Date(log.createdAt).toLocaleString('fr-FR')}</div>
+                                          </div>
+                                        ))}
+                                        {(!o.actionLogs || o.actionLogs.length === 0) && <div className="text-sm italic text-slate-400">Aucun log.</div>}
+                                      </div>
                                     </div>
                                   </div>
                                   <aside className="space-y-3">
                                     <div className="rounded-2xl border border-slate-200 bg-white p-4">
                                       <div className="text-xs font-black uppercase tracking-widest text-slate-400">Actions administratives</div>
                                       <select className={`mt-3 w-full rounded-xl px-4 py-3 text-xs font-bold uppercase border-none focus:ring-0 cursor-pointer ${getOrderStatusClasses(o.status)}`} value={o.status} onChange={(e) => onUpdateStatus(o.id, e.target.value as OrderStatus)}>
-                                        {[OrderStatus.IN_PROGRESS, OrderStatus.DELIVERED, OrderStatus.CANCELLED].map(s => <option key={s} value={s}>{ORDER_STATUS_LABELS[s]}</option>)}
+                                        {[OrderStatus.PAYMENT_UNDER_REVIEW, OrderStatus.PAYMENT_APPROVED, OrderStatus.PAYMENT_REJECTED, OrderStatus.IN_DELIVERY, OrderStatus.DELIVERED, OrderStatus.CANCELLED, OrderStatus.REFUNDED].map(s => <option key={s} value={s}>{ORDER_STATUS_LABELS[s]}</option>)}
                                       </select>
+                                      <button type="button" onClick={() => onAdminOrderAction('approvePayment', o.id)} className="mt-3 flex w-full items-center justify-center rounded-xl bg-emerald-600 px-4 py-3 text-xs font-black text-white hover:bg-emerald-700">
+                                        Approuver paiement
+                                      </button>
+                                      <button type="button" onClick={() => {
+                                        const reason = window.prompt('Raison du rejet paiement ?') || 'Paiement rejeté.';
+                                        onAdminOrderAction('rejectPayment', o.id, { reason });
+                                      }} className="mt-3 flex w-full items-center justify-center rounded-xl bg-red-50 px-4 py-3 text-xs font-black text-red-700 hover:bg-red-100">
+                                        Rejeter paiement
+                                      </button>
                                       <a href={`mailto:${o.customerEmail || o.buyer?.email || ''}`} className="mt-3 flex w-full items-center justify-center rounded-xl border border-slate-200 px-4 py-3 text-xs font-black text-slate-700 hover:bg-slate-50">
                                         Email client
                                       </a>
@@ -5250,6 +5380,27 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
 
 // --- USER DASHBOARD ---
 export const UserDashboard: React.FC<{user: User, orders: Order[], navigateTo: (page: string) => void}> = ({ user, orders, navigateTo }) => {
+  const sortedOrders = [...orders].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const [deliveryByOrder, setDeliveryByOrder] = useState<Record<string, Array<{ id: string; deliveryContent: string; deliveryType: string; activationGuide?: string; restrictions?: string; region?: string }>>>({});
+  const [deliveryLoadingId, setDeliveryLoadingId] = useState<string | null>(null);
+  const [deliveryError, setDeliveryError] = useState<Record<string, string>>({});
+
+  const loadDelivery = async (order: Order) => {
+    setDeliveryLoadingId(order.id);
+    setDeliveryError((current) => ({ ...current, [order.id]: '' }));
+    try {
+      const result = await api.getOrderDelivery(order.orderNumber);
+      setDeliveryByOrder((current) => ({ ...current, [order.id]: result.deliveries }));
+    } catch (error) {
+      setDeliveryError((current) => ({
+        ...current,
+        [order.id]: error instanceof Error ? error.message : 'Livraison indisponible pour le moment.'
+      }));
+    } finally {
+      setDeliveryLoadingId(null);
+    }
+  };
+
   return (
     <div className="max-w-6xl mx-auto p-4 md:p-8 space-y-8 animate-in fade-in duration-500">
       <div className="flex flex-col md:flex-row items-center justify-between gap-4">
@@ -5284,7 +5435,7 @@ export const UserDashboard: React.FC<{user: User, orders: Order[], navigateTo: (
               <Clock size={18} className="mr-2 text-slate-400" /> Activité Récente
             </h3>
             <div className="space-y-4">
-              {orders.slice(0, 3).map(o => (
+              {sortedOrders.slice(0, 3).map(o => (
                 <div key={o.id} className="flex items-center justify-between text-sm">
                   <div className="flex items-center">
                     <div className="w-2 h-2 rounded-full bg-indigo-500 mr-2"></div>
@@ -5303,12 +5454,22 @@ export const UserDashboard: React.FC<{user: User, orders: Order[], navigateTo: (
             <History size={20} className="mr-2 text-indigo-600" /> Historique des Commandes
           </h2>
           <div className="space-y-4">
-            {orders.map((o) => (
+            {sortedOrders.map((o) => (
                <div key={o.id} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 transition-all hover:shadow-md">
                   <div className="flex-1 w-full">
                      <div className="text-[10px] font-bold text-indigo-600 uppercase mb-1 tracking-widest">{o.orderNumber}</div>
                      {o.invoice?.invoiceNumber && <div className="text-[11px] text-slate-400">Facture: {o.invoice.invoiceNumber}</div>}
                      <h3 className="font-bold text-slate-900 text-lg">{o.items?.[0]?.titleSnapshot || 'Commande'}</h3>
+                     <div className="mt-2 flex flex-wrap gap-2">
+                       <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase ${getOrderStatusClasses(o.status)}`}>
+                         {ORDER_STATUS_LABELS[o.status] || o.status}
+                       </span>
+                       {o.payments?.[0] && (
+                         <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase ${o.payments[0].status === 'APPROVED' ? 'bg-emerald-100 text-emerald-700' : o.payments[0].status === 'REJECTED' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                           Paiement {o.payments[0].status === 'SUBMITTED' ? 'en cours de traitement' : o.payments[0].status}
+                         </span>
+                       )}
+                     </div>
                      <div className="text-xs text-slate-500 mt-1 flex items-center">
                        <Clock size={12} className="mr-1" /> {new Date(o.createdAt).toLocaleString()}
                      </div>
@@ -5316,7 +5477,7 @@ export const UserDashboard: React.FC<{user: User, orders: Order[], navigateTo: (
                        {ORDER_STATUS_STEPS.map((step, index) => {
                          const currentStepIndex = getOrderStepIndex(o.status);
                          const isDone = currentStepIndex >= index;
-                         const isCurrent = o.status === step.status;
+                         const isCurrent = o.status === step.status || (index === 0 && [OrderStatus.REGISTERED, OrderStatus.PENDING_PAYMENT, OrderStatus.PAYMENT_UNDER_REVIEW, OrderStatus.IN_PROGRESS].includes(o.status));
                          const isCancelled = o.status === OrderStatus.CANCELLED;
                          return (
                            <div key={step.status} className={`rounded-2xl border p-3 ${isCancelled ? 'border-red-200 bg-red-50' : isCurrent ? 'border-indigo-200 bg-indigo-50' : isDone ? 'border-green-200 bg-green-50' : 'border-slate-200 bg-slate-50'}`}>
@@ -5337,6 +5498,36 @@ export const UserDashboard: React.FC<{user: User, orders: Order[], navigateTo: (
                      </div>
                   )}
 
+                  {o.status === OrderStatus.DELIVERED && (
+                    <div className="w-full rounded-xl border border-emerald-100 bg-emerald-50 p-4 md:w-auto md:min-w-[260px]">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">Produit livré</div>
+                      {!deliveryByOrder[o.id] && (
+                        <button
+                          type="button"
+                          onClick={() => loadDelivery(o)}
+                          disabled={deliveryLoadingId === o.id}
+                          className="mt-3 w-full rounded-xl bg-emerald-600 px-4 py-3 text-xs font-black text-white hover:bg-emerald-700 disabled:opacity-60"
+                        >
+                          {deliveryLoadingId === o.id ? 'Chargement...' : 'Voir ma livraison'}
+                        </button>
+                      )}
+                      {deliveryError[o.id] && <div className="mt-3 rounded-lg bg-red-50 p-2 text-xs font-semibold text-red-700">{deliveryError[o.id]}</div>}
+                      {deliveryByOrder[o.id] && (
+                        <div className="mt-3 space-y-3">
+                          {deliveryByOrder[o.id].map((delivery) => (
+                            <div key={delivery.id} className="rounded-xl border border-emerald-100 bg-white p-3">
+                              <div className="mb-2 text-[10px] font-black uppercase text-emerald-700">{delivery.deliveryType}</div>
+                              <pre className="whitespace-pre-wrap break-words rounded-lg bg-slate-50 p-3 font-mono text-xs font-bold text-slate-900">{delivery.deliveryContent}</pre>
+                              {delivery.activationGuide && <div className="mt-2 text-xs text-slate-600"><strong>Activation:</strong> {delivery.activationGuide}</div>}
+                              {delivery.restrictions && <div className="mt-1 text-xs text-slate-600"><strong>Restrictions:</strong> {delivery.restrictions}</div>}
+                              {delivery.region && <div className="mt-1 text-xs text-slate-600"><strong>Region:</strong> {delivery.region}</div>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <div className="text-right min-w-[100px]">
                      <div className="font-black text-slate-900 text-lg">{o.amount.toFixed(2)} TND</div>
                      <div className={`text-[10px] font-bold uppercase px-2 py-1 rounded mt-2 inline-block ${getOrderStatusClasses(o.status)}`}>
@@ -5345,7 +5536,7 @@ export const UserDashboard: React.FC<{user: User, orders: Order[], navigateTo: (
                   </div>
                </div>
             ))}
-            {orders.length === 0 && (
+            {sortedOrders.length === 0 && (
                 <div className="text-center py-20 bg-white rounded-2xl border border-dashed border-slate-300 text-slate-400 italic">
                     Vous n'avez pas encore passé de commande.
                 </div>

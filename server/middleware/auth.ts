@@ -15,6 +15,18 @@ export const authenticate = (req: Request & { user?: { id: string, role: string 
   } catch { return res.status(403).json({ error: 'Invalid token' }); }
 };
 
+export const optionalAuthenticate = (req: Request & { user?: { id: string, role: string } }, _res: Response, next: NextFunction) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) return next();
+  try {
+    const decoded = jwt.verify(authHeader.split(' ')[1], JWT_SECRET) as { id: string, role: string };
+    req.user = decoded;
+  } catch {
+    // Public routes keep working; protected routes still use authenticate.
+  }
+  next();
+};
+
 export const isAdmin = (req: Request & { user?: { role: string } }, res: Response, next: NextFunction) => { 
     if (req.user?.role !== 'ADMIN') return res.status(403).json({ error: 'Admin only' }); 
     next(); 

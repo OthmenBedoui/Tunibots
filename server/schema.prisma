@@ -36,6 +36,8 @@ model User {
   updatedAt        DateTime @updatedAt
   orders           Order[]
   payments         Payment[]
+  reviewedPayments Payment[] @relation("PaymentReviewer")
+  sentDeliveries   Delivery[] @relation("DeliverySender")
   loyaltyPoints    LoyaltyPoint[]
   cart             Cart?
 }
@@ -207,27 +209,42 @@ model CartItem {
 model Order {
   id                  String      @id @default(uuid())
   orderNumber         String      @unique
+  idempotencyKey      String?     @unique
   userId              String?
   user                User?       @relation(fields: [userId], references: [id])
-  status              String      @default("REGISTERED")
+  status              String      @default("PAYMENT_UNDER_REVIEW")
   amount              Float
+  subtotal            Float       @default(0)
+  discount            Float       @default(0)
+  total               Float       @default(0)
   currency            String      @default("TND")
   source              String      @default("GUEST")
+  customerType        String      @default("GUEST")
+  guestEmail          String?
+  guestPhone          String?
+  cartFingerprint     String?
+  trackingTokenHash   String?
   customerFirstName   String
   customerLastName    String
   customerEmail       String
   customerPhone       String
   paymentMethod       String?
   paymentConfirmedAt  DateTime?
+  expiresAt           DateTime?
   emailStatus         String      @default("PENDING")
   emailSentAt         DateTime?
   emailError          String?
   items               OrderItem[]
   invoice             Invoice?
   payments            Payment[]
+  deliveries          Delivery[]
+  actionLogs          OrderActionLog[]
   loyaltyPoints       LoyaltyPoint[]
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
+
+  @@index([cartFingerprint])
+  @@index([guestEmail, guestPhone, createdAt])
 }
 
 model OrderItem {
@@ -240,8 +257,12 @@ model OrderItem {
   quantity      Int
   priceSnapshot Float
   titleSnapshot String
+  productSnapshotImage String?
   variantSnapshot String?
+  deliveryType  String        @default("MIXED")
+  status        String        @default("LOCKED")
   invoiceItems  InvoiceItem[]
+  deliveries    Delivery[]
 }
 
 model Invoice {
@@ -296,15 +317,62 @@ model Payment {
   userId          String?
   user            User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   method          String
-  status          String   @default("PENDING")
+  status          String   @default("SUBMITTED")
   amount          Float
   currency        String   @default("TND")
   transactionRef  String?  @unique
+  customerReference String?
+  proofFileUrl    String?
+  submittedAt     DateTime @default(now())
+  approvedAt      DateTime?
+  rejectedAt      DateTime?
+  reviewedBy      String?
+  reviewer        User?    @relation("PaymentReviewer", fields: [reviewedBy], references: [id], onDelete: SetNull)
+  rejectionReason String?
   recordedBy      String?
   notes           String?
   paidAt          DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+}
+
+model Delivery {
+  id                       String     @id @default(uuid())
+  orderId                  String
+  order                    Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItemId              String?
+  orderItem                OrderItem? @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
+  status                   String     @default("LOCKED")
+  deliveryContentEncrypted String
+  deliveryType             String     @default("MIXED")
+  activationGuide          String?
+  restrictions             String?
+  region                   String?
+  sentAt                   DateTime?
+  sentBy                   String?
+  sender                   User?      @relation("DeliverySender", fields: [sentBy], references: [id], onDelete: SetNull)
+  viewedAt                 DateTime?
+  resendCount              Int        @default(0)
+  createdAt                DateTime   @default(now())
+  updatedAt                DateTime   @updatedAt
+
+  @@index([orderId])
+  @@index([orderItemId])
+}
+
+model OrderActionLog {
+  id        String   @id @default(uuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  actorType String
+  actorId   String?
+  action    String
+  ipAddress String?
+  userAgent String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([orderId, createdAt])
 }
 
 model LoyaltyPoint {

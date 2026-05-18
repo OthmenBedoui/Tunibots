@@ -32,13 +32,15 @@ const ProductPage: React.FC<ProductPageProps> = ({ product, categories, selected
   const activationCountry = product.activationCountry || 'Tunisia';
   const isGlobalRegion = ['global', 'globale', 'worldwide'].includes(region.trim().toLowerCase());
   const descriptionTags = [category?.name, product.game, platform].filter((tag, index, items): tag is string => Boolean(tag) && items.indexOf(tag) === index).slice(0, 3);
+  const restrictionsContent = product.restrictionsContent
+    || (isGlobalRegion
+      ? `<p><strong>${activationCountry}</strong> est compatible avec cette offre. Ce produit est disponible en région globale.</p>`
+      : `<p>Cette offre est limitée à la région <strong>${region}</strong>.</p>`);
   const infoButtons = [
     {
       label: product.restrictionsTitle || 'Check Restrictions',
       title: product.restrictionsTitle || 'Check Restrictions',
-      content: isGlobalRegion
-        ? `<p><strong>${activationCountry}</strong> est compatible avec cette offre. Ce produit est disponible en région globale.</p>`
-        : product.restrictionsContent || `<p>Cette offre est limitée à la région <strong>${region}</strong>.</p>`
+      content: restrictionsContent
     },
     { label: product.activationGuideTitle || 'Activation Guide', title: product.activationGuideTitle || 'Activation Guide', content: product.activationGuideContent || '<p>No activation guide has been added for this product.</p>' },
     { label: product.regionTitle || 'Region', title: product.regionTitle || 'Region', content: product.regionContent || `<p>Region: ${region}</p>` }

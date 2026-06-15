@@ -1,7 +1,7 @@
 import React from 'react';
 import { Tag } from 'lucide-react';
-import { Listing } from '../types';
-import { getListingDiscountLabel, getListingDisplayPrice, hasListingDiscount, hasListingVariants } from '../utils/pricing';
+import { Listing } from '../../types';
+import { getListingDiscountLabel, getListingDisplayPrice, hasListingDiscount, hasListingVariants } from '../../utils/pricing';
 
 interface PriceDisplayProps {
   listing: Listing;

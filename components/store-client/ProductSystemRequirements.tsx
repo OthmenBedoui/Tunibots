@@ -1,6 +1,6 @@
 import React from 'react';
 import { Cpu, HardDrive, MemoryStick, Monitor, PcCase } from 'lucide-react';
-import { Listing } from '../types';
+import { Listing } from '../../types';
 
 interface ProductSystemRequirementsProps {
   product: Listing;

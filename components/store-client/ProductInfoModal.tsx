@@ -1,7 +1,7 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
-import { sanitizeRichText } from '../utils/richText';
+import { sanitizeRichText } from '../../utils/richText';
 
 interface ProductInfoModalProps {
   title: string;

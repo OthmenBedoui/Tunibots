@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Apple, Chrome, Facebook, Github, Loader2, LucideIcon, MonitorSmartphone, MessageCircleMore } from 'lucide-react';
-import { api } from '../services/api';
-import { PublicAuthProvider } from '../types';
+import { api } from '../../services/api';
+import { PublicAuthProvider } from '../../types';
 
 interface SocialAuthButtonsProps {
   compact?: boolean;

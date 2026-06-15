@@ -1,6 +1,6 @@
 import React from 'react';
 import { Package } from 'lucide-react';
-import { Listing } from '../types';
+import { Listing } from '../../types';
 
 interface ListingImageProps {
   listing: Listing;

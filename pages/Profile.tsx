@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { User, UserRole } from '../types';
 import { api } from '../services/api';
-import { ImageInput } from '../components/ImageInput';
+import { ImageInput } from '../components/shared/ImageInput';
 import { AlertTriangle, Save, Shield, Mail, Lock, User as UserIcon, History, Trash2, Phone, MapPin } from 'lucide-react';
 
 interface ProfileProps {

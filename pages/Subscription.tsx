@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { AlertCircle, ArrowLeft, ArrowRight, Check, CheckCircle2, Crown, CreditCard, Lock, Mail, MapPin, Phone, ShieldCheck, Sparkles, User, X, Zap } from 'lucide-react';
 import { SubscriptionTier, User as UserType, UserRole } from '../types';
 import { api } from '../services/api';
-import SocialAuthButtons from '../components/SocialAuthButtons';
+import SocialAuthButtons from '../components/shared/SocialAuthButtons';
 
 interface SubscriptionProps {
   user: UserType;

@@ -12,7 +12,7 @@ import {
   Underline,
   Undo2,
 } from 'lucide-react';
-import { sanitizeRichText } from '../utils/richText';
+import { sanitizeRichText } from '../../utils/richText';
 
 interface RichTextEditorProps {
   label: string;

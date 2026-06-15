@@ -1,7 +1,7 @@
 import React from 'react';
 import { BadgeCheck, Headphones, ShoppingBag, ShoppingCart, Zap } from 'lucide-react';
-import { Listing, ProductVariant } from '../types';
-import { getListingFinalPrice, hasListingDiscount } from '../utils/pricing';
+import { Listing, ProductVariant } from '../../types';
+import { getListingFinalPrice, hasListingDiscount } from '../../utils/pricing';
 
 interface ProductPriceCardProps {
   product: Listing;

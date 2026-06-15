@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { sanitizeRichText } from '../utils/richText';
+import { sanitizeRichText } from '../../utils/richText';
 
 interface ProductDescriptionCardProps {
   title: string;

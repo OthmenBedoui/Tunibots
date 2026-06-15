@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { ArrowRight, Loader2, Lock, Mail, MapPin, Phone, ShieldCheck, User } from 'lucide-react';
 import { SiteConfig, User as UserType } from '../types';
 import { api } from '../services/api';
-import SocialAuthButtons from '../components/SocialAuthButtons';
+import SocialAuthButtons from '../components/shared/SocialAuthButtons';
 
 type AuthMode = 'login' | 'register' | 'otp';
 type AuthAudience = 'client' | 'admin';

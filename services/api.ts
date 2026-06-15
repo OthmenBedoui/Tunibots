@@ -1,10 +1,24 @@
 import { Listing, Order, OrderStatus, User, UserRole, SubscriptionTier, Category, SubCategory, CartItem, SiteConfig, GuestCheckoutPayload, AuthProviderConfig, AuthProviderKey, PublicAuthProvider, ClientNotification } from '../types';
 
 const API_URL = '/api';
+const DEFAULT_API_TIMEOUT_MS = 15000;
 
 async function fetchWithFallback<T>(input: RequestInfo, init?: RequestInit, fallbackData?: T): Promise<T> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), DEFAULT_API_TIMEOUT_MS);
+  const externalSignal = init?.signal;
+  const handleExternalAbort = () => controller.abort();
+
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort();
+    } else {
+      externalSignal.addEventListener('abort', handleExternalAbort, { once: true });
+    }
+  }
+
   try {
-    const res = await fetch(input, init);
+    const res = await fetch(input, { ...init, signal: controller.signal });
     if (!res.ok) {
       let message = res.statusText;
       try {
@@ -17,9 +31,20 @@ async function fetchWithFallback<T>(input: RequestInfo, init?: RequestInit, fall
     }
     return await res.json();
   } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      const timeoutError = new Error('Request timed out. Please retry.');
+      console.warn(`API Timeout: ${input}`, timeoutError);
+      if (fallbackData) return fallbackData;
+      throw timeoutError;
+    }
     console.warn(`API Fail: ${input}`, error);
     if (fallbackData) return fallbackData;
     throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+    if (externalSignal) {
+      externalSignal.removeEventListener('abort', handleExternalAbort);
+    }
   }
 }
 

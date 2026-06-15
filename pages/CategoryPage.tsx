@@ -3,8 +3,8 @@ import { Listing, SubCategory } from '../types';
 import { ArrowLeft, Filter, Search, LayoutGrid, Zap, X } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import { getListingDiscountLabel, getListingFinalPrice, hasListingDiscount } from '../utils/pricing';
-import PriceDisplay from '../components/PriceDisplay';
-import { ListingImage } from '../components/ListingImage';
+import PriceDisplay from '../components/store-client/PriceDisplay';
+import { ListingImage } from '../components/store-client/ListingImage';
 
 interface CategoryPageProps {
   categoryId: string; 

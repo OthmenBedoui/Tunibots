@@ -1,15 +1,16 @@
 
 import React, { useState, useEffect } from 'react';
-import { Package, TrendingUp, DollarSign, Plus, Loader2, Zap, Crown, Users, Shield, FolderTree, Trash2, Edit, LayoutGrid, Save, X, Settings, User as UserIcon, Clock, History } from 'lucide-react';
+import { Package, TrendingUp, DollarSign, Plus, Loader2, Zap, Users, Shield, Trash2, Edit, LayoutGrid, Save, X, User as UserIcon, Clock, History } from 'lucide-react';
 import { User, Order, OrderStatus, Listing, UserRole, Category, SubCategory, ProductType, LoginCredential, SiteConfig, HeroSlide, HeroPromoBanner, FloatingBrandCard, DiscountType, ProductVariant, StoreSectionConfig, CustomFont, ClientNotification } from '../types';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { generateListingDescription } from '../services/geminiService';
 import { api, SeoAnalytics } from '../services/api';
 import * as LucideIcons from 'lucide-react';
-import { ImageInput } from '../components/ImageInput';
-import { RichTextEditor } from '../components/RichTextEditor';
-import { ListingImage } from '../components/ListingImage';
-import { AdminEmptyState, AdminPanelCard, AdminStickyActionBar, AdminWorkspace } from '../components/AdminWorkspace';
+import { AdminErrorState, AdminPremiumLoader } from '../components/admin/AdminSurfaceState';
+import { ImageInput } from '../components/shared/ImageInput';
+import { RichTextEditor } from '../components/shared/RichTextEditor';
+import { ListingImage } from '../components/store-client/ListingImage';
+import { AdminEmptyState, AdminPanelCard, AdminStickyActionBar } from '../components/admin/AdminWorkspace';
 import { getListingDiscountLabel, getListingFinalPrice, getPackageOriginalTotal, getPackageSavings, hasListingDiscount } from '../utils/pricing';
 import { richTextToPlainText, sanitizeRichText } from '../utils/richText';
 import { getMergedStoreSections, STORE_SECTION_DEFINITIONS } from '../utils/storeSections';
@@ -29,24 +30,14 @@ interface AdminDashboardProps {
   onUpdateSiteConfig: (config: Partial<SiteConfig>) => void;
   onResendOrderInvoiceEmail: (orderId: string) => Promise<void>;
   navigateTo: (page: string, slug?: string) => void;
-  focusTab?: 'overview' | 'orders' | 'users' | 'notification-config' | 'settings' | null;
+  focusTab?: AdminTab | null;
   onFocusTabHandled?: () => void;
   focusOrderId?: string | null;
   onFocusOrderHandled?: () => void;
+  onActiveTabChange?: (tab: AdminTab) => void;
 }
 
 type AdminTab = 'overview' | 'orders' | 'listings' | 'create' | 'users' | 'categories' | 'settings' | 'customization' | 'store-config' | 'email-config' | 'notification-config' | 'seo' | 'data';
-
-type AdminNavItem = {
-  key: AdminTab | 'admin-register-authentication';
-  label: string;
-  description: string;
-  icon: React.ComponentType<{ size?: string | number; className?: string }>;
-  adminOnly?: boolean;
-  sellerHidden?: boolean;
-  isRoute?: boolean;
-  isAccent?: boolean;
-};
 
 const isImageIconValue = (value?: string) => {
   const normalized = value?.trim() || '';
@@ -512,120 +503,23 @@ const getOrderStatusClasses = (status: OrderStatus) => {
   return 'bg-amber-100 text-amber-700';
 };
 
-const ADMIN_TAB_META: Record<AdminTab, { eyebrow: string; title: string; description: string }> = {
-  overview: {
-    eyebrow: 'Pilotage',
-    title: 'Dashboard admin',
-    description: 'Vue synthétique des ventes, de la traction et des zones qui méritent une action rapide.'
-  },
-  orders: {
-    eyebrow: 'Commandes',
-    title: 'Centre de traitement des commandes',
-    description: 'Priorise les paiements, les livraisons et les relances clients sans quitter la même surface.'
-  },
-  listings: {
-    eyebrow: 'Catalogue',
-    title: 'Inventaire produits',
-    description: 'Gère les offres, les packs et la disponibilité du catalogue depuis une table claire et rapide.'
-  },
-  create: {
-    eyebrow: 'Edition',
-    title: 'Ajouter ou modifier un produit',
-    description: 'Tous les champs essentiels, les aperçus et les actions critiques restent accessibles pendant toute l’édition.'
-  },
-  users: {
-    eyebrow: 'Clients & staff',
-    title: 'Utilisateurs',
-    description: 'Consulte les comptes, ajuste les rôles et garde un pilotage simple pour l’équipe support.'
-  },
-  categories: {
-    eyebrow: 'Structure catalogue',
-    title: 'Catégories et sous-catégories',
-    description: 'Organise l’arborescence, les icônes et l’ordre d’affichage du storefront.'
-  },
-  settings: {
-    eyebrow: 'Configuration',
-    title: 'Paramètres généraux',
-    description: 'Centralise les réglages business, paiement et préférences globales du store.'
-  },
-  customization: {
-    eyebrow: 'Branding',
-    title: 'Store theme',
-    description: 'Ajuste les visuels, les couleurs, les slides et les composants storefront avec un rendu premium.'
-  },
-  'store-config': {
-    eyebrow: 'Storefront',
-    title: 'Configuration du store',
-    description: 'Pilote sections, header, footer et modules marketplace sans casser les routes existantes.'
-  },
-  'email-config': {
-    eyebrow: 'Notifications',
-    title: 'SMTP & templates email',
-    description: 'Configure le SMTP, les templates et les tests d’envoi depuis une seule page.'
-  },
-  'notification-config': {
-    eyebrow: 'Messaging',
-    title: 'Notifications admin et clients',
-    description: 'Coordonne alertes internes, envois clients et webhooks de communication.'
-  },
-  seo: {
-    eyebrow: 'Acquisition',
-    title: 'SEO & analytics',
-    description: 'Optimise la visibilité du store et surveille les signaux d’acquisition essentiels.'
-  },
-  data: {
-    eyebrow: 'Maintenance',
-    title: 'Export, import et nettoyage',
-    description: 'Sécurise les opérations sensibles sur les données avec des garde-fous explicites.'
-  }
-};
-
-const ADMIN_NAV_GROUPS: Array<{ label: string; items: AdminNavItem[] }> = [
-  {
-    label: 'Pilotage',
-    items: [
-      { key: 'overview', label: 'Dashboard', description: 'Vue globale', icon: TrendingUp },
-      { key: 'orders', label: 'Orders / Commandes', description: 'Paiement, livraison, statuts', icon: Package },
-      { key: 'listings', label: 'Products / Produits', description: 'Catalogue et disponibilité', icon: DollarSign },
-      { key: 'create', label: 'Product Packs', description: 'Créer un produit ou pack', icon: Plus, isAccent: true }
-    ]
-  },
-  {
-    label: 'Catalogue & clients',
-    items: [
-      { key: 'categories', label: 'Categories', description: 'Arborescence et icônes', icon: FolderTree, adminOnly: true },
-      { key: 'users', label: 'Users', description: 'Clients, rôles et soldes', icon: Users, adminOnly: true }
-    ]
-  },
-  {
-    label: 'Configuration business',
-    items: [
-      { key: 'store-config', label: 'Store Theme', description: 'Header, footer, sections', icon: LucideIcons.Store, adminOnly: true },
-      { key: 'customization', label: 'Store Design', description: 'Slides, branding, palettes', icon: LucideIcons.Images, adminOnly: true },
-      { key: 'email-config', label: 'SMTP & Notifications', description: 'SMTP et templates email', icon: LucideIcons.Mail, adminOnly: true },
-      { key: 'notification-config', label: 'SMS / OTP', description: 'Alertes admin et clients', icon: LucideIcons.BellRing, adminOnly: true },
-      { key: 'admin-register-authentication', label: 'Register & Authentication', description: 'Providers et accès', icon: LucideIcons.ShieldCheck, adminOnly: true, isRoute: true },
-      { key: 'seo', label: 'Marketing / Auto Post Facebook', description: 'SEO, pixels et analytics', icon: LucideIcons.SearchCheck, adminOnly: true },
-      { key: 'settings', label: 'Settings', description: 'Réglages globaux', icon: Settings, adminOnly: true },
-      { key: 'data', label: 'Data & maintenance', description: 'Export, import, clean', icon: LucideIcons.Database, adminOnly: true }
-    ]
-  }
-];
-
 const getListingStateClasses = (listing: Listing) => {
   if (listing.isArchived) return 'bg-slate-200 text-slate-700';
   if (listing.stock > 0) return 'bg-green-100 text-green-700';
   return 'bg-red-100 text-red-700';
 };
 
-export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings, categories, onUpdateStatus, onAdminOrderAction, onCreateListing, onUpdateListing, onDeleteListing, onRefreshCategories, user, siteConfig, onUpdateSiteConfig, onResendOrderInvoiceEmail, navigateTo, focusTab, onFocusTabHandled, focusOrderId, onFocusOrderHandled }) => {
+export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings, categories, onUpdateStatus, onAdminOrderAction, onCreateListing, onUpdateListing, onDeleteListing, onRefreshCategories, user, siteConfig, onUpdateSiteConfig, onResendOrderInvoiceEmail, navigateTo, focusTab, onFocusTabHandled, focusOrderId, onFocusOrderHandled, onActiveTabChange }) => {
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
   const [notificationAdminTab, setNotificationAdminTab] = useState<'orders' | 'client'>('orders');
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [stats, setStats] = useState<{name: string, sales: number, orders: number}[]>([]);
   const [summary, setSummary] = useState({ totalSales: 0, totalOrders: 0, totalUsers: 0 });
   const [topProducts, setTopProducts] = useState<Listing[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isOverviewLoading, setIsOverviewLoading] = useState(false);
+  const [overviewError, setOverviewError] = useState<string | null>(null);
+  const [isSavingUser, setIsSavingUser] = useState(false);
+  const [overviewReloadNonce, setOverviewReloadNonce] = useState(0);
   const [listingPendingDelete, setListingPendingDelete] = useState<Listing | null>(null);
   const [isDeletingListing, setIsDeletingListing] = useState(false);
   const [orderFilter, setOrderFilter] = useState<'all' | OrderStatus>('all');
@@ -1271,9 +1165,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
 
   useEffect(() => {
     if (!focusTab) return;
-    setActiveTab(focusTab);
+    if (focusTab !== activeTab) {
+      setActiveTab(focusTab);
+    }
     onFocusTabHandled?.();
-  }, [focusTab, onFocusTabHandled]);
+  }, [activeTab, focusTab, onFocusTabHandled]);
+
+  useEffect(() => {
+    onActiveTabChange?.(activeTab);
+  }, [activeTab, onActiveTabChange]);
 
   useEffect(() => {
     if (!focusOrderId) return;
@@ -1283,17 +1183,42 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
   }, [focusOrderId, onFocusOrderHandled]);
 
   useEffect(() => {
+    let isCancelled = false;
+
     if (activeTab === 'users' && user.role === UserRole.ADMIN) {
-        api.getAllUsers().then(setAllUsers);
+        api.getAllUsers()
+          .then((users) => {
+            if (!isCancelled) {
+              setAllUsers(users);
+            }
+          })
+          .catch((error) => {
+            console.warn('Unable to load admin users.', error);
+            showAdminToast({
+              type: 'error',
+              title: 'Utilisateurs indisponibles',
+              message: "Impossible de charger la liste des utilisateurs pour le moment."
+            });
+          });
     }
     if (activeTab === 'notification-config' && user.role === UserRole.ADMIN) {
-        api.getAllUsers().then(setAllUsers).catch(console.error);
+        api.getAllUsers()
+          .then((users) => {
+            if (!isCancelled) {
+              setAllUsers(users);
+            }
+          })
+          .catch((error) => {
+            console.warn('Unable to load users for notification center.', error);
+          });
     }
     if (activeTab === 'overview') {
         const fetchStats = async () => {
-            setIsLoading(true);
+            setIsOverviewLoading(true);
+            setOverviewError(null);
             try {
                 const data = await api.getDailyStats();
+                if (isCancelled) return;
                 const formatted = (Array.isArray(data.dailyStats) ? data.dailyStats : []).map((s: {date: string, sales: number, orders: number}) => ({
                     name: new Date(s.date).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }),
                     sales: s.sales,
@@ -1307,27 +1232,43 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                 });
                 setTopProducts(Array.isArray(data.topProducts) ? data.topProducts : []);
             } catch (err) {
-                console.error("Failed to fetch stats:", err);
+                if (!isCancelled) {
+                  console.warn('Failed to fetch admin dashboard stats.', err);
+                  setOverviewError(err instanceof Error ? err.message : "Impossible de charger le dashboard.");
+                }
             } finally {
-                setIsLoading(false);
+                if (!isCancelled) {
+                  setIsOverviewLoading(false);
+                }
             }
         };
-        fetchStats();
+        void fetchStats();
     }
     if (activeTab === 'seo') {
       const fetchSeoAnalytics = async () => {
         setIsSeoAnalyticsLoading(true);
         try {
-          setSeoAnalytics(await api.getSeoAnalytics());
+          const analytics = await api.getSeoAnalytics();
+          if (!isCancelled) {
+            setSeoAnalytics(analytics);
+          }
         } catch (err) {
-          console.error('Failed to fetch SEO analytics:', err);
+          if (!isCancelled) {
+            console.warn('Failed to fetch SEO analytics.', err);
+          }
         } finally {
-          setIsSeoAnalyticsLoading(false);
+          if (!isCancelled) {
+            setIsSeoAnalyticsLoading(false);
+          }
         }
       };
-      fetchSeoAnalytics();
+      void fetchSeoAnalytics();
     }
-  }, [activeTab, user.role]);
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [activeTab, overviewReloadNonce, user.role]);
 
   const startEditingUser = (u: User) => {
     setEditingUser(u);
@@ -1338,7 +1279,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
   const handleUpdateUser = async () => {
     if (!editingUser) return;
     try {
-      setIsLoading(true);
+      setIsSavingUser(true);
       await api.updateUserRole(editingUser.id, editUserRole);
       await api.updateUserBalance(editingUser.id, parseFloat(editUserBalance) || 0);
       
@@ -1357,7 +1298,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
         message: "Erreur lors de la mise à jour de l'utilisateur."
       });
     } finally {
-      setIsLoading(false);
+      setIsSavingUser(false);
     }
   };
 
@@ -2059,8 +2000,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
   });
   const draftPackagePrice = parseFloat(newListingPrice) || 0;
   const packageSavings = Math.max(0, packageOriginalTotal - draftPackagePrice);
-  const currentTabMeta = ADMIN_TAB_META[activeTab];
   const selectedCategoryName = categories.find((category) => category.id === newListingCatId)?.name || 'Non classé';
+  const shouldShowOverviewBootLoader =
+    activeTab === 'overview' &&
+    isOverviewLoading &&
+    stats.length === 0 &&
+    topProducts.length === 0 &&
+    summary.totalSales === 0 &&
+    summary.totalOrders === 0 &&
+    summary.totalUsers === 0;
   const draftListingPreview = {
     title: newListingTitle.trim() || 'Produit en brouillon',
     subtitle: newListingGame.trim() || 'Marketplace digitale',
@@ -2085,129 +2033,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
       onConfirm: () => onUpdateStatus(orderId, nextStatus)
     });
   };
-
-  const dashboardActions = activeTab === 'create'
-    ? (
-        <>
-          <button
-            type="button"
-            onClick={() => navigateTo('admin-dashboard')}
-            className="rounded-2xl border border-white/10 bg-white/10 px-5 py-3 text-sm font-black text-white hover:bg-white/15"
-          >
-            Retour
-          </button>
-          <button
-            type="button"
-            onClick={resetListingForm}
-            className="rounded-2xl border border-white/10 bg-white/10 px-5 py-3 text-sm font-black text-white hover:bg-white/15"
-          >
-            Annuler
-          </button>
-          <button
-            type="button"
-            onClick={openDraftPreview}
-            className="rounded-2xl border border-white/10 bg-white/10 px-5 py-3 text-sm font-black text-white hover:bg-white/15"
-          >
-            Prévisualiser
-          </button>
-          <button
-            type="submit"
-            form="admin-listing-form"
-            className="inline-flex items-center gap-2 rounded-2xl bg-white px-5 py-3 text-sm font-black text-slate-950 hover:bg-slate-100"
-          >
-            <Save size={16} />
-            Enregistrer
-          </button>
-        </>
-      )
-    : (
-        <>
-          <button
-            type="button"
-            onClick={() => navigateTo('admin-dashboard')}
-            className="rounded-2xl border border-white/10 bg-white/10 px-5 py-3 text-sm font-black text-white hover:bg-white/15"
-          >
-            Retour au dashboard
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              resetListingForm();
-              setActiveTab('create');
-            }}
-            className="inline-flex items-center gap-2 rounded-2xl bg-white px-5 py-3 text-sm font-black text-slate-950 hover:bg-slate-100"
-          >
-            <Plus size={16} />
-            Ajouter un produit
-          </button>
-        </>
-      );
-
-  const sidebar = (
-    <div className="space-y-4">
-      <AdminPanelCard className="overflow-visible">
-        <div className="flex items-center gap-4">
-          <div className="flex h-14 w-14 items-center justify-center rounded-3xl bg-slate-950 text-white shadow-lg">
-            {user.role === UserRole.ADMIN ? <Crown size={24} /> : <Shield size={22} />}
-          </div>
-          <div className="min-w-0">
-            <div className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">
-              {user.role === UserRole.ADMIN ? 'Administration complète' : user.role === UserRole.SUB_ADMIN ? 'Sous admin' : 'Gestion vendeur'}
-            </div>
-            <div className="mt-1 text-lg font-black text-slate-950">{siteConfig.siteName}</div>
-            <p className="mt-1 text-sm text-slate-500">Navigation stable pour toutes les pages admin.</p>
-          </div>
-        </div>
-      </AdminPanelCard>
-
-      <AdminPanelCard title="Modules admin" description="Accès rapide aux surfaces les plus utilisées.">
-        <div className="space-y-5">
-          {ADMIN_NAV_GROUPS.map((group) => (
-            <div key={group.label}>
-              <div className="mb-2 px-1 text-[11px] font-black uppercase tracking-[0.22em] text-slate-400">{group.label}</div>
-              <div className="space-y-2">
-                {group.items
-                  .filter((item) => !(item.adminOnly && user.role !== UserRole.ADMIN))
-                  .filter((item) => !(item.sellerHidden && user.role === UserRole.SELLER))
-                  .map((item) => {
-                    const Icon = item.icon;
-                    const isActive = !item.isRoute && activeTab === item.key;
-                    const baseClass = item.isAccent
-                      ? 'border-indigo-600 bg-indigo-600 text-white hover:bg-indigo-700'
-                      : isActive
-                        ? 'border-slate-950 bg-slate-950 text-white shadow-lg'
-                        : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-white';
-
-                    return (
-                      <button
-                        key={item.key}
-                        type="button"
-                        onClick={() => {
-                          if (item.isRoute) {
-                            navigateTo(item.key);
-                            return;
-                          }
-                          setActiveTab(item.key as AdminTab);
-                        }}
-                        className={`flex w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left transition ${baseClass}`}
-                      >
-                        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${isActive || item.isAccent ? 'bg-white/10 text-white' : 'bg-white text-slate-700 shadow-sm'}`}>
-                          <Icon size={18} />
-                        </div>
-                        <div className="min-w-0">
-                          <div className="truncate text-sm font-black">{item.label}</div>
-                          <div className={`truncate text-xs ${isActive || item.isAccent ? 'text-slate-200' : 'text-slate-500'}`}>{item.description}</div>
-                        </div>
-                      </button>
-                    );
-                  })}
-              </div>
-            </div>
-          ))}
-        </div>
-      </AdminPanelCard>
-    </div>
-  );
 
   return (
     <>
@@ -2289,22 +2114,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
         </div>
       </div>
     )}
-    <AdminWorkspace
-      eyebrow={currentTabMeta.eyebrow}
-      title={currentTabMeta.title}
-      description={currentTabMeta.description}
-      breadcrumbs={[
-        { label: 'Dashboard', onClick: () => setActiveTab('overview') },
-        { label: currentTabMeta.title }
-      ]}
-      actions={dashboardActions}
-      sidebar={sidebar}
-    >
-      <div className="min-h-screen pb-12">
-        {isLoading && (
-            <div className="fixed inset-0 bg-white/50 backdrop-blur-sm z-50 flex items-center justify-center">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+      <div className="space-y-6 pb-12">
+        {isOverviewLoading && activeTab === 'overview' && !shouldShowOverviewBootLoader && (
+            <div className="sticky top-0 z-20 flex justify-end">
+                <div className="inline-flex items-center gap-3 rounded-2xl border border-indigo-100 bg-white/95 px-4 py-3 text-sm font-semibold text-slate-700 shadow-lg backdrop-blur">
+                    <Loader2 size={18} className="animate-spin text-indigo-600" />
+                    Actualisation du dashboard...
+                </div>
             </div>
+        )}
+        {shouldShowOverviewBootLoader && (
+          <AdminPremiumLoader
+            siteName={siteConfig.siteName}
+            logoUrl={siteConfig.logoUrl}
+            title="Admin dashboard"
+            compact
+            showSkeleton
+          />
+        )}
+        {activeTab === 'overview' && overviewError && !isOverviewLoading && (
+          <AdminErrorState
+            title="Le dashboard n’a pas pu se synchroniser"
+            message={overviewError}
+            onRetry={() => setOverviewReloadNonce((current) => current + 1)}
+            onBack={() => navigateTo('admin-dashboard')}
+          />
         )}
          {activeTab === 'data' && user.role === UserRole.ADMIN && (
           <div className="space-y-6">
@@ -4193,7 +4027,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                 </div>
             </div>
         )}
-        {activeTab === 'overview' && (
+        {activeTab === 'overview' && !overviewError && !shouldShowOverviewBootLoader && (
              <div className="space-y-6">
                {/* KPI Cards */}
                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -5389,10 +5223,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                         </div>
                         <button 
                             onClick={handleUpdateUser}
-                            className="w-full py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 transition flex items-center justify-center space-x-2"
+                            disabled={isSavingUser}
+                            className="w-full py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 transition flex items-center justify-center space-x-2 disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                            <Save size={18} />
-                            <span>Enregistrer les modifications</span>
+                            {isSavingUser ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
+                            <span>{isSavingUser ? 'Enregistrement...' : 'Enregistrer les modifications'}</span>
                         </button>
                     </div>
                 </div>
@@ -5856,7 +5691,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
              </div>
         )}
       </div>
-    </AdminWorkspace>
     {listingPendingDelete && (
       <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4 animate-in fade-in duration-200">
         <div className="w-full max-w-md rounded-3xl bg-white shadow-2xl border border-slate-200 overflow-hidden">

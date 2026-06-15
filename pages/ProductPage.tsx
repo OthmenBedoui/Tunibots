@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import { CheckCircle2, ChevronRight, Eye, Gamepad2, Globe2, Heart, MonitorPlay, Star } from 'lucide-react';
 import { Category, Listing, ProductVariant } from '../types';
-import ProductInfoModal from '../components/ProductInfoModal';
-import ProductPriceCard from '../components/ProductPriceCard';
-import ProductVariations from '../components/ProductVariations';
-import ProductDescriptionCard from '../components/ProductDescriptionCard';
-import ProductSystemRequirements from '../components/ProductSystemRequirements';
-import { ListingImage } from '../components/ListingImage';
+import ProductInfoModal from '../components/store-client/ProductInfoModal';
+import ProductPriceCard from '../components/store-client/ProductPriceCard';
+import ProductVariations from '../components/store-client/ProductVariations';
+import ProductDescriptionCard from '../components/store-client/ProductDescriptionCard';
+import ProductSystemRequirements from '../components/store-client/ProductSystemRequirements';
+import { ListingImage } from '../components/store-client/ListingImage';
 import { getListingFinalPrice } from '../utils/pricing';
 
 interface ProductPageProps {

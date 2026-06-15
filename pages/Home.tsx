@@ -4,9 +4,9 @@ import { Listing, Category, SiteConfig } from '../types';
 import { ArrowRight, ChevronLeft, ChevronRight, Zap, Star, Shield, Tag } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import { getListingDiscountLabel, getListingFinalPrice, getPackageSavings, hasListingDiscount, hasPackageSavings } from '../utils/pricing';
-import PriceDisplay from '../components/PriceDisplay';
+import PriceDisplay from '../components/store-client/PriceDisplay';
 import { getMergedStoreSections, isStoreSectionEnabled } from '../utils/storeSections';
-import { ListingImage } from '../components/ListingImage';
+import { ListingImage } from '../components/store-client/ListingImage';
 
 interface HomeProps {
   listings: Listing[];

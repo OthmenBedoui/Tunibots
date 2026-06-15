@@ -1,9 +1,9 @@
 
 import React, { useState } from 'react';
 import { ShoppingCart, Search, Menu, User as UserIcon, LogOut, LayoutDashboard, LogIn, CheckCircle, AlertCircle, X, Moon, Sun } from 'lucide-react';
-import { User, UserRole, Category, SiteConfig } from '../types';
+import { User, UserRole, Category, SiteConfig } from '../../types';
 import * as LucideIcons from 'lucide-react';
-import { useThemeMode } from '../utils/themeMode';
+import { useThemeMode } from '../../utils/themeMode';
 
 interface LayoutProps {
   children: React.ReactNode;

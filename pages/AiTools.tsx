@@ -1,8 +1,8 @@
 import React from 'react';
 import { Bot, Sparkles, Code, BrainCircuit, Star, Zap, Search, Filter, LayoutGrid } from 'lucide-react';
 import { Listing } from '../types';
-import PriceDisplay from '../components/PriceDisplay';
-import { ListingImage } from '../components/ListingImage';
+import PriceDisplay from '../components/store-client/PriceDisplay';
+import { ListingImage } from '../components/store-client/ListingImage';
 import { richTextToPlainText } from '../utils/richText';
 
 interface AiToolsProps {

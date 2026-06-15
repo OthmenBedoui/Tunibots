@@ -4,8 +4,8 @@ import { api } from '../services/api';
 import { CartItem, Listing, Order, OrderStatus, SiteConfig, User } from '../types';
 import { clearGuestCart, getGuestCartCount, getGuestCartItems, removeGuestCartLine } from '../utils/guestCart';
 import { getListingFinalPrice } from '../utils/pricing';
-import PriceDisplay from '../components/PriceDisplay';
-import { ListingImage } from '../components/ListingImage';
+import PriceDisplay from '../components/store-client/PriceDisplay';
+import { ListingImage } from '../components/store-client/ListingImage';
 
 interface CartProps {
   navigateTo: (page: string) => void;

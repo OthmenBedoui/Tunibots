@@ -1,5 +1,5 @@
 import React from 'react';
-import { ProductVariant } from '../types';
+import { ProductVariant } from '../../types';
 
 interface ProductVariationsProps {
   variants: ProductVariant[];

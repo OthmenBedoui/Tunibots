@@ -1,7 +1,7 @@
 
-import React, { useRef, useState, useEffect } from 'react';
-import AdminLayout from './components/AdminLayout';
-import Layout from './components/Layout';
+import React, { useRef, useState, useEffect, useMemo } from 'react';
+import AdminLayout from './components/admin/AdminLayout';
+import Layout from './components/store-client/Layout';
 import Home from './pages/Home';
 import Login from './pages/Login';
 import Subscription from './pages/Subscription';
@@ -38,6 +38,21 @@ type PendingNavigation = {
   slug?: string;
 } | null;
 
+type AdminTab =
+  | 'overview'
+  | 'orders'
+  | 'listings'
+  | 'create'
+  | 'users'
+  | 'categories'
+  | 'settings'
+  | 'customization'
+  | 'store-config'
+  | 'email-config'
+  | 'notification-config'
+  | 'seo'
+  | 'data';
+
 export type AdminNotificationItem = {
   id: string;
   type: 'order' | 'user' | 'account' | 'subscription' | 'system';
@@ -56,61 +71,69 @@ const isAdminRole = (role: UserRole) =>
   role === UserRole.ADMIN || role === UserRole.SUB_ADMIN || role === UserRole.SELLER;
 
 const resolveRouteFromPath = (pathname: string): { page: string; slug?: string } => {
-  if (pathname === '/admin' || pathname === '/admin/') {
+  const normalizedPath = pathname === '/' ? '/' : pathname.replace(/\/+$/, '');
+
+  if (normalizedPath === '/') {
+    return { page: 'home' };
+  }
+  if (normalizedPath === '/admin') {
     return { page: 'admin-dashboard' };
   }
-  if (pathname === '/admin/login') {
+  if (normalizedPath === '/admin/login') {
     return { page: 'admin-login' };
   }
-  if (pathname === '/admin/register-authentication') {
+  if (normalizedPath === '/admin/register-authentication') {
     return { page: 'admin-register-authentication' };
   }
-  if (pathname === '/login') {
+  if (normalizedPath === '/login') {
     return { page: 'login' };
   }
-  if (pathname === '/register') {
+  if (normalizedPath === '/register') {
     return { page: 'register' };
   }
-  if (pathname === '/cart') {
+  if (normalizedPath === '/cart') {
     return { page: 'cart' };
   }
-  if (pathname === '/order-track') {
+  if (normalizedPath === '/order-track') {
     return { page: 'order-track' };
   }
-  if (pathname === '/subscription') {
+  if (normalizedPath === '/subscription') {
     return { page: 'subscription' };
   }
-  if (pathname === '/about') {
+  if (normalizedPath === '/about') {
     return { page: 'about' };
   }
-  if (pathname === '/contact') {
+  if (normalizedPath === '/contact') {
     return { page: 'contact' };
   }
-  if (pathname === '/privacy-policy') {
+  if (normalizedPath === '/privacy-policy') {
     return { page: 'privacy-policy' };
   }
-  if (pathname === '/data-deletion') {
+  if (normalizedPath === '/data-deletion') {
     return { page: 'data-deletion' };
   }
-  if (pathname === '/terms') {
+  if (normalizedPath === '/terms') {
     return { page: 'terms' };
   }
-  if (pathname === '/profile') {
+  if (normalizedPath === '/profile') {
     return { page: 'profile' };
   }
-  if (pathname === '/auth/callback') {
+  if (normalizedPath === '/auth/callback') {
     return { page: 'auth-callback' };
   }
-  if (pathname === '/dashboard') {
+  if (normalizedPath === '/dashboard') {
     return { page: 'user-dashboard' };
   }
-  if (pathname.startsWith('/category/')) {
-    return { page: 'category', slug: decodeURIComponent(pathname.replace('/category/', '')) };
+  if (normalizedPath.startsWith('/category/')) {
+    return { page: 'category', slug: decodeURIComponent(normalizedPath.replace('/category/', '')) };
   }
-  if (pathname === '/product') {
+  if (normalizedPath === '/product') {
     return { page: 'product' };
   }
-  return { page: 'home' };
+  if (normalizedPath.startsWith('/admin')) {
+    return { page: 'admin-not-found' };
+  }
+  return { page: 'not-found' };
 };
 
 const getPathForPage = (page: string, slug?: string) => {
@@ -151,6 +174,9 @@ const getPathForPage = (page: string, slug?: string) => {
       return slug ? `/category/${encodeURIComponent(slug)}` : '/';
     case 'product':
       return '/product';
+    case 'admin-not-found':
+    case 'not-found':
+      return window.location.pathname;
     case 'home':
     default:
       return '/';
@@ -239,11 +265,16 @@ const App: React.FC = () => {
   const [blockingOrderNotification, setBlockingOrderNotification] = useState<AdminNotificationItem | null>(null);
   const [clientNotifications, setClientNotifications] = useState<ClientNotification[]>([]);
   const [adminFocusOrderId, setAdminFocusOrderId] = useState<string | null>(null);
-  const [adminFocusTab, setAdminFocusTab] = useState<'overview' | 'orders' | 'users' | 'notification-config' | 'settings' | null>(null);
+  const [adminFocusTab, setAdminFocusTab] = useState<AdminTab | null>(null);
+  const [adminActiveTab, setAdminActiveTab] = useState<AdminTab>('overview');
   const [siteConfig, setSiteConfig] = useState<SiteConfig>({ logoUrl: '', siteName: 'TuniBots', logoSize: 32, heroPromoBanners: [], floatingBrandCards: [], storeSections: [] });
   const [pendingNavigation, setPendingNavigation] = useState<PendingNavigation>(null);
   const [isAuthResolved, setIsAuthResolved] = useState(!localStorage.getItem('token'));
-  const publicListings = listings.filter((listing) => !listing.isArchived);
+  const publicListings = useMemo(() => listings.filter((listing) => !listing.isArchived), [listings]);
+  const pendingOrdersCount = useMemo(
+    () => orders.filter((order) => order.status === OrderStatus.PAYMENT_UNDER_REVIEW).length,
+    [orders]
+  );
 
   useEffect(() => {
     const handlePopState = () => {
@@ -257,35 +288,119 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    let isMounted = true;
     const token = localStorage.getItem('token');
-    if (token) {
-      api.getCurrentUser()
-        .then(setUser)
-        .catch(() => {
+
+    const bootstrap = async () => {
+      if (token) {
+        try {
+          const currentUser = await api.getCurrentUser();
+          if (isMounted) {
+            setUser(currentUser);
+          }
+        } catch (error) {
+          console.warn('Unable to restore current user session.', error);
           localStorage.removeItem('token');
-          setUser(INITIAL_GUEST);
-        })
-        .finally(() => setIsAuthResolved(true));
-    } else {
-      setIsAuthResolved(true);
-    }
-    
-    api.getListings().then(setListings).catch(console.error);
-    api.getCategories().then(setCategories).catch(console.error);
-    api.getSiteConfig().then(setSiteConfig).catch(console.error);
-    
-    if (token) {
-      api.getCart().then(items => { if(items.length > 0) setCartCount(items.reduce((acc, item) => acc + item.quantity, 0)); else setCartCount(0); }).catch(() => {});
-    } else {
-      setCartCount(getGuestCartCount());
-    }
-    
-    if (user.role === UserRole.ADMIN || user.role === UserRole.SUB_ADMIN || user.role === UserRole.SELLER) {
-        api.getAllOrders().then(setOrders).catch(console.error);
-    } else if (user.id !== 'guest') {
-        api.getMyOrders().then(setOrders).catch(console.error);
-    }
-  }, [user.id, user.role]);
+          if (isMounted) {
+            setUser(INITIAL_GUEST);
+          }
+        } finally {
+          if (isMounted) {
+            setIsAuthResolved(true);
+          }
+        }
+      } else if (isMounted) {
+        setIsAuthResolved(true);
+      }
+
+      const [listingResult, categoryResult, siteConfigResult] = await Promise.allSettled([
+        api.getListings(),
+        api.getCategories(),
+        api.getSiteConfig()
+      ]);
+
+      if (!isMounted) {
+        return;
+      }
+
+      if (listingResult.status === 'fulfilled') {
+        setListings(listingResult.value);
+      } else {
+        console.warn('Unable to load listings during app bootstrap.', listingResult.reason);
+      }
+
+      if (categoryResult.status === 'fulfilled') {
+        setCategories(categoryResult.value);
+      } else {
+        console.warn('Unable to load categories during app bootstrap.', categoryResult.reason);
+      }
+
+      if (siteConfigResult.status === 'fulfilled') {
+        setSiteConfig(siteConfigResult.value);
+      } else {
+        console.warn('Unable to load site config during app bootstrap.', siteConfigResult.reason);
+      }
+    };
+
+    void bootstrap();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+    const token = localStorage.getItem('token');
+
+    const syncCart = async () => {
+      if (!token) {
+        if (isMounted) {
+          setCartCount(getGuestCartCount());
+        }
+        return;
+      }
+
+      try {
+        const items = await api.getCart();
+        if (isMounted) {
+          setCartCount(items.reduce((acc, item) => acc + item.quantity, 0));
+        }
+      } catch (error) {
+        console.warn('Unable to sync cart count.', error);
+      }
+    };
+
+    void syncCart();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user.id]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const syncOrders = async () => {
+      if (!isAuthResolved) return;
+      if (user.id === 'guest' || isAdminRole(user.role)) return;
+
+      try {
+        const latestOrders = await api.getMyOrders();
+        if (isMounted) {
+          setOrders(latestOrders);
+        }
+      } catch (error) {
+        console.warn('Unable to load client orders during bootstrap.', error);
+      }
+    };
+
+    void syncOrders();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isAuthResolved, user.id, user.role]);
 
   useEffect(() => {
     const title = siteConfig.seoTitle || siteConfig.siteName || 'TuniBots';
@@ -344,7 +459,11 @@ const App: React.FC = () => {
   }, [siteConfig]);
 
   useEffect(() => {
-    const isAdminSurface = currentPage === 'admin-dashboard' || currentPage === 'admin-login';
+    const isAdminSurface =
+      currentPage === 'admin-dashboard' ||
+      currentPage === 'admin-login' ||
+      currentPage === 'admin-register-authentication' ||
+      currentPage === 'admin-not-found';
     if (isAdminSurface) return;
     const pageType = selectedProduct && currentPage === 'product'
       ? 'product'
@@ -449,17 +568,25 @@ const App: React.FC = () => {
     setAdminNotifications((current) => current.map((item) => ({ ...item, read: true })));
   };
 
+  const openAdminTab = (tab: AdminTab) => {
+    setAdminFocusOrderId(null);
+    setAdminActiveTab((current) => (current === tab ? current : tab));
+    setAdminFocusTab(tab);
+    if (currentPage !== 'admin-dashboard') {
+      navigateTo('admin-dashboard');
+    }
+  };
+
   const openAdminNotificationOrder = (item: AdminNotificationItem) => {
     markAdminNotificationRead(item.id);
     setBlockingOrderNotification(null);
     setIsAdminNotificationCenterOpen(false);
     if (item.orderId) {
       setAdminFocusOrderId(item.orderId);
-      setAdminFocusTab('orders');
+      openAdminTab('orders');
     } else if (item.targetTab) {
-      setAdminFocusTab(item.targetTab);
+      openAdminTab(item.targetTab);
     }
-    navigateTo('admin-dashboard');
     if (item.orderNumber) {
       showNotification(`Commande ${item.orderNumber} ouverte dans le dashboard`);
       return;
@@ -728,9 +855,20 @@ const App: React.FC = () => {
   }, [user.id, user.role]);
 
   const navigateTo = (page: string, slug?: string, replace = false) => {
-    setCurrentPage(page);
+    const knownPages = new Set([
+      'admin-dashboard', 'admin-login', 'admin-register-authentication', 'admin-not-found',
+      'home', 'login', 'register', 'cart', 'order-track', 'subscription', 'about', 'contact',
+      'privacy-policy', 'data-deletion', 'terms', 'profile', 'auth-callback', 'user-dashboard',
+      'category', 'product', 'not-found'
+    ]);
+    const nextPage = knownPages.has(page) ? page : (page.startsWith('admin') ? 'admin-not-found' : 'not-found');
+    if (!knownPages.has(page)) {
+      console.warn(`Unknown navigation target "${page}". Redirecting to ${nextPage}.`);
+    }
+
+    setCurrentPage(nextPage);
     setCurrentSlug(slug || '');
-    const nextPath = getPathForPage(page, slug);
+    const nextPath = getPathForPage(nextPage, slug);
     if (window.location.pathname !== nextPath) {
       if (replace) {
         window.history.replaceState({}, '', nextPath);
@@ -811,7 +949,12 @@ const App: React.FC = () => {
       return;
     }
 
-    if ((currentPage === 'admin-dashboard' || currentPage === 'admin-register-authentication') && !isAdminRole(user.role)) {
+    if (
+      (currentPage === 'admin-dashboard' ||
+        currentPage === 'admin-register-authentication' ||
+        currentPage === 'admin-not-found') &&
+      !isAdminRole(user.role)
+    ) {
       navigateTo('admin-login', undefined, true);
       return;
     }
@@ -1066,6 +1209,7 @@ const App: React.FC = () => {
                   onFocusTabHandled={() => setAdminFocusTab(null)}
                   focusOrderId={adminFocusOrderId}
                   onFocusOrderHandled={() => setAdminFocusOrderId(null)}
+                  onActiveTabChange={setAdminActiveTab}
                />;
       case 'admin-register-authentication':
         return (
@@ -1073,6 +1217,34 @@ const App: React.FC = () => {
             navigateTo={navigateTo}
             onNotify={showNotification}
           />
+        );
+      case 'admin-not-found':
+        return (
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-8 shadow-sm">
+            <div className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-black uppercase tracking-[0.22em] text-amber-700">
+              Route introuvable
+            </div>
+            <h1 className="mt-4 text-3xl font-black text-slate-950">Page admin introuvable</h1>
+            <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-600">
+              Cette URL admin n’existe pas ou n’est pas encore rattachée au shell Tunibots.
+            </p>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => openAdminTab('overview')}
+                className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-slate-800"
+              >
+                Retour dashboard
+              </button>
+              <button
+                type="button"
+                onClick={() => navigateTo('admin-register-authentication')}
+                className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 hover:bg-slate-50"
+              >
+                Auth & Register
+              </button>
+            </div>
+          </div>
         );
       
       case 'user-dashboard': return (
@@ -1088,6 +1260,27 @@ const App: React.FC = () => {
       case 'profile': return <Profile user={user} onUpdateUser={setUser} onDeleteAccountSuccess={handleAccountDeleted} navigateTo={navigateTo} />;
       case 'auth-callback':
         return <AuthCallback onLoginSuccess={handleLoginSuccess} navigateTo={navigateTo} />;
+      case 'not-found':
+        return (
+          <div className="mx-auto max-w-3xl rounded-[2rem] border border-slate-200 bg-white p-8 shadow-sm">
+            <div className="inline-flex rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs font-black uppercase tracking-[0.22em] text-red-700">
+              404
+            </div>
+            <h1 className="mt-4 text-3xl font-black text-slate-950">Page introuvable</h1>
+            <p className="mt-3 text-sm leading-7 text-slate-600">
+              La page demandée n’existe pas ou le lien utilisé n’est plus valide.
+            </p>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => navigateTo('home')}
+                className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-slate-800"
+              >
+                Retour accueil
+              </button>
+            </div>
+          </div>
+        );
       default: return <Home listings={publicListings} categories={categories} onViewProduct={handleViewProduct} navigateTo={navigateTo} siteConfig={siteConfig} />;
     }
   };
@@ -1096,7 +1289,11 @@ const App: React.FC = () => {
     return renderContent();
   }
 
-  if (currentPage === 'admin-dashboard' || currentPage === 'admin-register-authentication') {
+  if (
+    currentPage === 'admin-dashboard' ||
+    currentPage === 'admin-register-authentication' ||
+    currentPage === 'admin-not-found'
+  ) {
     return (
       <AdminLayout
         user={user}
@@ -1112,6 +1309,13 @@ const App: React.FC = () => {
         onCloseNotificationCenter={() => setIsAdminNotificationCenterOpen(false)}
         onMarkAllNotificationsRead={markAllAdminNotificationsRead}
         onOpenAdminNotification={openAdminNotificationOrder}
+        activeTab={currentPage === 'admin-dashboard' ? adminActiveTab : ''}
+        onNavClick={(tabId) => {
+          openAdminTab(tabId as AdminTab);
+        }}
+        onNavigateRegisterAuth={() => navigateTo('admin-register-authentication')}
+        pendingOrdersCount={pendingOrdersCount}
+        newUsersCount={0}
       >
         {renderContent()}
       </AdminLayout>
